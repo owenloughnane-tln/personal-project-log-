@@ -1978,105 +1978,90 @@ async function deleteProjectKeys(ids){
   try{ await mapWithConcurrency(ids, 4, id => window.storage.delete(projectKey(id), true)); }
   catch(e){ console.error('Failed to clean up deleted project keys', e); }
 }
-// small menu opened from the header's Data button — export makes a backup, import restores one
-function openDataMenuModal(){
+const TODO_LIST_KEY = 'todo-list-v1';
+async function loadTodoList(){
+  try{
+    const res = await window.storage.get(TODO_LIST_KEY, true);
+    return res && res.value ? JSON.parse(res.value) : [];
+  }catch(e){ return []; }
+}
+async function saveTodoList(items){
+  try{ await window.storage.set(TODO_LIST_KEY, JSON.stringify(items), true); return true; }
+  catch(e){ console.error('todo list save failed', e); return false; }
+}
+// a quick, freeform daily checklist — separate from any project, just type and go
+async function openTodoListModal(){
   closeSidePanels();
+  let items = await loadTodoList();
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
-  bg.innerHTML = `
-    <div class="modal">
-      <h3>Data</h3>
-      <div class="script-hint">Export makes a backup file. Import restores projects and photos from one.</div>
-      <button type="button" class="btn small" id="dataExportBtn" style="width:100%; margin-top:10px;">⬇ Export data (backup)</button>
-      <button type="button" class="btn small" id="dataImportBtn" style="width:100%; margin-top:8px;">⬆ Import data (restore from backup)</button>
-      <div class="modal-actions"><button class="btn ghost" id="dataMenuClose" style="flex:1;">Close</button></div>
-    </div>`;
   document.body.appendChild(bg);
-  bg.addEventListener('click', ev => { if(ev.target === bg) bg.remove(); });
-  bg.querySelector('#dataMenuClose').addEventListener('click', () => bg.remove());
-  bg.querySelector('#dataExportBtn').addEventListener('click', () => { bg.remove(); exportAllData(); });
-  bg.querySelector('#dataImportBtn').addEventListener('click', () => { bg.remove(); openImportFlow(); });
-}
-function openImportFlow(){
-  const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = 'application/json,.json';
-  input.style.display = 'none';
-  document.body.appendChild(input);
-  input.addEventListener('change', () => {
-    const file = input.files && input.files[0];
-    input.remove();
-    if(!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      let payload;
-      try{ payload = JSON.parse(reader.result); }
-      catch(e){ showToast('That file is not valid JSON', true); return; }
-      const data = payload && payload.data;
-      if(!data || typeof data !== 'object'){ showToast("That doesn't look like a backup from this app", true); return; }
-      const keys = Object.keys(data);
-      if(!keys.length){ showToast('That backup file is empty', true); return; }
-      const madeText = payload.exportedAt ? ` made ${fmtDate(payload.exportedAt.slice(0,10))}` : '';
-      openConfirmModal(`Restore ${keys.length} item${keys.length===1?'':'s'} from a backup${madeText}? This overwrites any current data with the same name — anything not in the backup is left alone.`, async () => {
-        showToast('Restoring…');
-        // a newly published artifact's storage can be slow to "warm up" — a big burst of writes
-        // right after publishing is more likely to hit transient failures than steady everyday
-        // use, so failed keys get a couple of paced retry passes before being given up on
-        async function attempt(keysToTry, concurrency){
-          const failedKeys = [];
-          await mapWithConcurrency(keysToTry, concurrency, async key => {
-            try{ await window.storage.set(key, data[key], true); }
-            catch(e){ failedKeys.push(key); console.error('import: failed to restore key', key, e); }
-          });
-          return failedKeys;
-        }
-        let remaining = await attempt(keys, 8);
-        for(let pass = 0; remaining.length && pass < 2; pass++){
-          await new Promise(r => setTimeout(r, 1500));
-          remaining = await attempt(remaining, 3);
-        }
-        await loadProjects();
-        render();
-        const failed = remaining.length;
-        showToast(failed ? `Restored with ${failed} item${failed===1?'':'s'} still failing — try Import again in a moment` : 'Backup restored', !!failed);
-      });
-    };
-    reader.onerror = () => showToast('Could not read that file', true);
-    reader.readAsText(file);
-  });
-  input.click();
-}
-// a raw safety-net backup — every stored key (all projects, all photos, everything) dumped
-// verbatim into one downloadable JSON file, independent of the app's own schema so it still
-// works as a backup even if a future version of the app changes how data is structured
-async function exportAllData(){
-  showToast('Preparing export…');
-  try{
-    const res = await window.storage.list('', true);
-    const keys = (res && res.keys) || [];
-    if(!keys.length){ showToast('Nothing to export yet', true); return; }
-    const data = {};
-    await mapWithConcurrency(keys, 8, async key => {
-      try{
-        const r = await window.storage.get(key, true);
-        if(r && r.value !== undefined) data[key] = r.value;
-      }catch(e){ console.error('export: failed to read key', key, e); }
-    });
-    const payload = { app: 'personal project log', exportedAt: new Date().toISOString(), data };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `personal-project-log-backup-${new Date().toISOString().slice(0,10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    showToast('Backup downloaded');
-  }catch(e){
-    console.error('export failed', e);
-    showToast('Export failed', true);
+
+  function todoRowHtml(item){
+    return `
+      <label class="checklist-view-row" data-todo="${item.id}">
+        <input type="checkbox" class="todo-done" ${item.done ? 'checked' : ''}>
+        <span class="citem-label${item.done ? ' done' : ''}">${esc(item.text)}</span>
+        <button type="button" class="mo-btn todo-remove" aria-label="Remove item">&times;</button>
+      </label>`;
   }
+
+  function paint(){
+    bg.innerHTML = `
+      <div class="modal">
+        <h3>To do today</h3>
+        <div class="field-row">
+          <input type="text" id="todoNewText" placeholder="Add a task and press Enter…" style="flex:1;">
+        </div>
+        <div class="checklist-view-list" id="todoRows" style="margin-top:12px;">${items.map(todoRowHtml).join('')}</div>
+        ${items.length ? `<button type="button" class="btn small" id="todoClearDone" style="width:100%; margin-top:12px;">Clear ticked-off items</button>` : ''}
+        <div class="modal-actions"><button class="btn primary" id="todoClose" style="flex:1;">Close</button></div>
+      </div>`;
+    wire();
+    bg.querySelector('#todoNewText').focus();
+  }
+
+  function wire(){
+    const input = bg.querySelector('#todoNewText');
+    input.addEventListener('keydown', async ev => {
+      if(ev.key !== 'Enter') return;
+      const text = input.value.trim();
+      if(!text) return;
+      items.push({ id: uid(), text, done: false });
+      await saveTodoList(items);
+      paint();
+    });
+    bg.querySelectorAll('.todo-done').forEach(cb => {
+      cb.addEventListener('change', async () => {
+        const row = cb.closest('[data-todo]');
+        const item = items.find(i => i.id === row.dataset.todo);
+        if(!item) return;
+        item.done = cb.checked;
+        cb.nextElementSibling.classList.toggle('done', item.done);
+        await saveTodoList(items);
+      });
+    });
+    bg.querySelectorAll('.todo-remove').forEach(btn => {
+      btn.addEventListener('click', async ev => {
+        ev.preventDefault();
+        const row = btn.closest('[data-todo]');
+        items = items.filter(i => i.id !== row.dataset.todo);
+        await saveTodoList(items);
+        paint();
+      });
+    });
+    const clearBtn = bg.querySelector('#todoClearDone');
+    if(clearBtn){
+      clearBtn.addEventListener('click', async () => {
+        items = items.filter(i => !i.done);
+        await saveTodoList(items);
+        paint();
+      });
+    }
+    bg.querySelector('#todoClose').addEventListener('click', () => bg.remove());
+  }
+  bg.addEventListener('click', ev => { if(ev.target === bg) bg.remove(); });
+  paint();
 }
 function showToast(msg, isErr){
   const existing = document.querySelector('.toast');
@@ -2142,8 +2127,8 @@ function renderHeader(){
         <div><h1>personal project log</h1><span>project tracker</span></div>
       </div>
       <div class="topbar-actions">
-        <button class="sq-btn" id="dataBtn" aria-label="Data — export or import" title="Data — export or import">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg>
+        <button class="sq-btn" id="todoBtn" aria-label="To do today" title="To do today">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M7 9h10M7 13h10M7 17h6"/></svg>
         </button>
         <button class="sq-btn" id="calBtn" aria-label="Project calendar" title="Project calendar">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>
@@ -2281,7 +2266,7 @@ function renderList(app, tab){
       });
     });
   });
-  document.getElementById('dataBtn').addEventListener('click', () => openDataMenuModal());
+  document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
   const nb = document.getElementById('notifyBanner');
   if(nb) nb.addEventListener('click', () => goProject(nb.dataset.project));
@@ -2346,7 +2331,7 @@ function renderNotFound(app){
     <div class="empty">That project isn't in the log.<br><br>
     <button class="btn" id="backBtn">← Back to projects</button></div>`;
   document.getElementById('backBtn').addEventListener('click', () => goTab('current'));
-  document.getElementById('dataBtn').addEventListener('click', () => openDataMenuModal());
+  document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
 }
 
@@ -6498,12 +6483,14 @@ function testRowHtml(t, i){
       <textarea class="test-desc" placeholder="What this test covers…" style="margin-bottom:8px;">${esc(t.description || '')}</textarea>
       <label style="display:block; font-size:11px; color:var(--text-dim); margin-bottom:4px;">Test date</label>
       ${dateFieldHtml('td-' + t.id, t.date || '')}
+      <label style="display:block; font-size:11px; color:var(--text-dim); margin:8px 0 4px;">Outcome</label>
+      <textarea class="test-outcome" placeholder="What went well, what needs to happen for the next test…">${esc(t.outcome || '')}</textarea>
     </div>`;
 }
 function openTestsModal(project, step, sideRight){
   closeSidePanels();
   let tests = (step.tests || []).map(t => ({ ...t }));
-  if(!tests.length) tests.push({ id: uid(), title:'', description:'', date:'', done:false });
+  if(!tests.length) tests.push({ id: uid(), title:'', description:'', date:'', outcome:'', done:false });
   const bg = document.createElement('div');
   bg.className = 'modal-bg' + (sideRight ? ' side-right' : '');
 
@@ -6514,6 +6501,7 @@ function openTestsModal(project, step, sideRight){
         t.title = row.querySelector('.test-title').value;
         t.description = row.querySelector('.test-desc').value;
         t.date = row.querySelector('.dfield input[type=hidden]').value;
+        t.outcome = row.querySelector('.test-outcome').value;
         t.done = row.querySelector('.test-done').checked;
       }
     });
@@ -6538,14 +6526,14 @@ function openTestsModal(project, step, sideRight){
     bg.querySelector('#tstCancel').addEventListener('click', () => bg.remove());
     bg.querySelector('#tstAddTest').addEventListener('click', () => {
       syncFromDom();
-      tests.push({ id: uid(), title:'', description:'', date:'', done:false });
+      tests.push({ id: uid(), title:'', description:'', date:'', outcome:'', done:false });
       paint();
     });
     bg.querySelectorAll('[data-removetest]').forEach(btn => {
       btn.addEventListener('click', () => {
         syncFromDom();
         tests = tests.filter(t => t.id !== btn.dataset.removetest);
-        if(!tests.length) tests.push({ id: uid(), title:'', description:'', date:'', done:false });
+        if(!tests.length) tests.push({ id: uid(), title:'', description:'', date:'', outcome:'', done:false });
         paint();
       });
     });
@@ -6554,7 +6542,7 @@ function openTestsModal(project, step, sideRight){
     });
     bg.querySelector('#tstSave').addEventListener('click', async () => {
       syncFromDom();
-      step.tests = tests.filter(t => t.title.trim() || t.description.trim() || t.date);
+      step.tests = tests.filter(t => t.title.trim() || t.description.trim() || t.date || t.outcome.trim());
       step.updatedAt = new Date().toISOString();
       project.updatedAt = step.updatedAt;
       const ok = await saveProjects();
@@ -7210,7 +7198,7 @@ Sarah steps outside. The neighbourhood is quiet, waking up. She takes a deep bre
       <button class="btn small" id="diagLoadBtn">Run diagnostics</button><br><br>
       <div id="diagResults" style="text-align:left; font-family:var(--mono); font-size:11px; white-space:pre-wrap; max-width:420px; margin:0 auto 14px; padding:10px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); display:none;"></div>
       <button class="btn danger small" id="resetLoadBtn">Start fresh (clears saved data)</button></div>`;
-    document.getElementById('dataBtn').addEventListener('click', () => openDataMenuModal());
+    document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
     document.getElementById('retryLoadBtn').addEventListener('click', () => location.reload());
     document.getElementById('diagLoadBtn').addEventListener('click', async () => {
