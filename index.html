@@ -758,10 +758,13 @@
   .sched-loc-dates{font-family:var(--mono); font-size:11.5px; color:var(--text-dim); margin-top:2px;}
   .imgset-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(100px, 1fr)); gap:8px; margin:12px 0;}
   .imgset-thumb{position:relative; aspect-ratio:1; border-radius:8px; overflow:hidden; border:1px solid var(--line); background:var(--panel-2);}
-  .imgset-thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+  .imgset-thumb img{width:100%; height:100%; object-fit:cover; display:block; cursor:pointer;}
   .imgset-remove{position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; border:none; background:rgba(0,0,0,0.65); color:#fff; font-size:15px; line-height:1; cursor:pointer;}
   .imgset-add{aspect-ratio:1; border-radius:8px; border:1.5px dashed var(--line); display:flex; align-items:center; justify-content:center; text-align:center; font-size:11.5px; color:var(--text-dim); cursor:pointer; padding:6px;}
   .imgset-add:hover{border-color:var(--amber);}
+  .lightbox-bg{position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:60; display:flex; align-items:center; justify-content:center; padding:24px; cursor:zoom-out;}
+  .lightbox-bg img{max-width:100%; max-height:100%; border-radius:8px; box-shadow:0 10px 40px rgba(0,0,0,0.5);}
+  .lightbox-close{position:absolute; top:16px; right:16px; width:36px; height:36px; border-radius:50%; border:none; background:rgba(255,255,255,0.15); color:#fff; font-size:20px; cursor:pointer; display:flex; align-items:center; justify-content:center;}
   .sl-imgbtn{background:none; border:1px solid var(--line); border-radius:6px; padding:6px 8px; cursor:pointer; font-size:14px; color:var(--text-dim); position:relative;}
   .sl-imgbtn .imgcount{position:absolute; top:-6px; right:-6px; background:var(--amber); color:#111; font-family:var(--mono); font-size:9px; font-weight:700; border-radius:8px; padding:1px 4px; min-width:14px; text-align:center;}
   .preset-row{display:flex; gap:8px; margin-bottom:16px;}
@@ -882,6 +885,13 @@ const STAGES = [
   {key:'making', label:'Making'},
   {key:'delivery', label:'Delivery'},
 ];
+const FILM_STAGES = [
+  {key:'pre', label:'Pre-Production'},
+  {key:'prod', label:'Production'},
+  {key:'post', label:'Post-Production'},
+];
+function isFilm(p){ return !!p && p.section === 'films'; }
+function getStages(p){ return isFilm(p) ? FILM_STAGES : STAGES; }
 const STATUSES = [
   {key:'current', label:'Current'},
   {key:'backburner', label:'Backburner'},
@@ -917,14 +927,41 @@ const DEFAULT_STEPS = [
   {title:'Delivery', stage:'delivery'},
   {title:'Overview', stage:'delivery', overviewForm:true},
 ];
+const FILM_DEFAULT_STEPS = [
+  {title:'Concepts', stage:'pre', moodboard:true},
+  {title:'Script', stage:'pre', scriptForm:true},
+  {title:'Timeline', stage:'pre', timelineForm:true},
+  {title:'Location scout', stage:'pre', locationForm:true},
+  {title:'Pre-vis', stage:'pre'},
+  {title:'Shot list', stage:'pre', shotlistForm:true},
+  {title:'Lighting set ups', stage:'pre'},
+  {title:'Shooting schedule of day', stage:'pre', scheduleForm:true},
+  {title:'Shooting day', stage:'prod'},
+  {title:'Filling in DIT', stage:'prod'},
+  {title:'Footage drop', stage:'post'},
+  {title:'Davinci file and bins', stage:'post'},
+  {title:'Sync audio', stage:'post'},
+  {title:'Assembly cut', stage:'post'},
+  {title:'Refined cut', stage:'post'},
+  {title:'Picture lock', stage:'post'},
+  {title:'Audio', stage:'post'},
+  {title:'Color correct', stage:'post'},
+  {title:'Grade', stage:'post'},
+  {title:'Titles', stage:'post'},
+  {title:'Review render', stage:'post'},
+  {title:'Adjustments', stage:'post'},
+  {title:'Final render', stage:'post'},
+  {title:'Overview', stage:'post', overviewForm:true},
+];
 // steps skipped entirely for a given project type — personal films don't have a physical "making" phase
 const SKIPPED_STEPS_BY_TYPE = {
   'personal-films': ['making'],
 };
-function makeDefaultSteps(projectType){
+function makeDefaultSteps(projectType, section){
   const now = new Date().toISOString();
-  const skip = SKIPPED_STEPS_BY_TYPE[projectType] || [];
-  return DEFAULT_STEPS
+  const films = section === 'films';
+  const skip = films ? [] : (SKIPPED_STEPS_BY_TYPE[projectType] || []);
+  return (films ? FILM_DEFAULT_STEPS : DEFAULT_STEPS)
     .filter(d => !skip.includes(d.title.trim().toLowerCase()))
     .map(d => ({
     id: uid(), title: d.title, stage: d.stage, moodboard: !!d.moodboard, briefForm: !!d.briefForm, scriptForm: !!d.scriptForm, budgetForm: !!d.budgetForm, contractForm: !!d.contractForm, timelineForm: !!d.timelineForm, meetingsForm: !!d.meetingsForm, locationForm: !!d.locationForm, shotlistForm: !!d.shotlistForm, scheduleForm: !!d.scheduleForm, ideasForm: !!d.ideasForm, designsForm: !!d.designsForm, testsForm: !!d.testsForm, suppliesForm: !!d.suppliesForm, equipmentForm: !!d.equipmentForm, costForm: !!d.costForm, overviewForm: !!d.overviewForm, hidden: false,
@@ -1101,7 +1138,7 @@ function autoGrowAll(container){
   });
 }
 function truncate(s, n){ s = s || ''; return s.length > n ? s.slice(0, n).trim() + '…' : s; }
-function stageLabel(key){ const s = STAGES.find(x => x.key === key); return s ? s.label : key; }
+function stageLabel(key){ const s = STAGES.concat(FILM_STAGES).find(x => x.key === key); return s ? s.label : key; }
 
 function fmtDate(iso){
   if(!iso) return '';
@@ -1282,6 +1319,10 @@ function wireShootDateList(bg){
     const trigger = ev.target.closest('.dfield');
     if(trigger) openDatePicker(trigger);
   });
+}
+function shootDaysFieldHtml(dates){
+  const rows = (dates && dates.length ? dates : ['']).map(shootDateRowHtml).join('');
+  return `<div class="field"><label>Shoot days</label><div class="date-list">${rows}</div><button type="button" class="btn small add-date-btn" style="margin-top:6px;">+ Add another day</button></div>`;
 }
 function collectShootDates(bg){
   return [...bg.querySelectorAll('.shoot-date-value')].map(i => i.value).filter(Boolean).sort();
@@ -1597,7 +1638,7 @@ function projectDotClass(project){
 function deriveStage(project){
   const steps = project.steps || [];
   if(!steps.length) return null;
-  for(const stage of STAGES){
+  for(const stage of getStages(project)){
     const next = steps.find(s => s.stage === stage.key && !s.done);
     if(next) return stage.key;
   }
@@ -1745,7 +1786,8 @@ function migrateProjectSteps(project){
   const now = new Date().toISOString();
   let insertAfterIndex = -1;
   const skip = SKIPPED_STEPS_BY_TYPE[project.projectType] || [];
-  DEFAULT_STEPS.forEach(d => {
+  // film projects have their own step set; never backfill, so deleted steps stay deleted
+  (isFilm(project) ? [] : DEFAULT_STEPS).forEach(d => {
     const key = d.title.trim().toLowerCase();
     if(skip.includes(key)) return;
     const idx = project.steps.findIndex(s => (s.title || '').trim().toLowerCase() === key);
@@ -2157,6 +2199,7 @@ function renderBottomNav(activeApp){
   return `
     <div class="bottomnav">
       <button class="navtab ${activeApp==='projects'?'active':''}" data-tab="current">Projects</button>
+      <button class="navtab ${activeApp==='films'?'active':''}" data-tab="films">Films</button>
     </div>`;
 }
 function wireNavtabs(container){
@@ -2170,37 +2213,39 @@ function wireNavtabs(container){
 function renderList(app, tab){
   const search = (app.dataset.search || '').toLowerCase();
   const searchOpen = app.dataset.searchOpen === '1';
-  const matches = p => !p.deletedAt && (!search || p.name.toLowerCase().includes(search));
+  const films = tab === 'films';
+  const inSection = p => films ? isFilm(p) : !isFilm(p);
+  const matches = p => !p.deletedAt && inSection(p) && (!search || p.name.toLowerCase().includes(search));
   const current = PROJECTS.filter(p => p.status === 'current' && matches(p)).sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||''));
   const backburner = PROJECTS.filter(p => p.status === 'backburner' && matches(p)).sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||''));
   const upcoming = PROJECTS.filter(p => p.status === 'upcoming' && matches(p)).sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||''));
   const finished = PROJECTS.filter(p => p.status === 'finished' && matches(p)).sort((a,b) => (b.updatedAt||'').localeCompare(a.updatedAt||''));
-  const trashed = PROJECTS.filter(p => p.deletedAt).sort((a,b) => (b.deletedAt||'').localeCompare(a.deletedAt||''));
+  const trashed = PROJECTS.filter(p => p.deletedAt && inSection(p)).sort((a,b) => (b.deletedAt||'').localeCompare(a.deletedAt||''));
   const allShown = [...current, ...backburner, ...upcoming, ...finished];
 
   app.innerHTML = `
     ${renderHeader()}
     ${renderNotifyBanner()}
     <div class="toolbar">
-      <button class="btn primary" id="addBtn">+ New Project</button>
+      <button class="btn primary" id="addBtn">${films ? '+ New Film' : '+ New Project'}</button>
       ${searchOpen
         ? `<input type="search" id="searchBox" placeholder="Search projects…" value="${esc(app.dataset.search||'')}">`
         : `<button class="sq-btn" id="searchToggle" aria-label="Search">&#128269;</button>`}
     </div>
-    <div class="section-label"><span>Projects (${current.length})</span></div>
-    ${current.length ? typeGroupedCardsHtml(current, 'current') : `<div class="card-sub" style="margin-bottom:14px; font-family:var(--mono); font-size:11px; color:var(--text-dim);">Nothing in progress — start a project.</div>`}
+    <div class="section-label"><span>${films ? 'Films' : 'Projects'} (${current.length})</span></div>
+    ${current.length ? cardsForTab(current, 'current', films) : `<div class="card-sub" style="margin-bottom:14px; font-family:var(--mono); font-size:11px; color:var(--text-dim);">Nothing in progress — start a project.</div>`}
 
     <details class="dropdown-group" ${search && backburner.length ? 'open' : ''}>
       <summary>Backburner <span class="dropdown-count">${backburner.length}</span></summary>
-      <div class="dropdown-body">${backburner.length ? typeGroupedCardsHtml(backburner, 'backburner') : `<p class="empty small">Nothing paused right now.</p>`}</div>
+      <div class="dropdown-body">${backburner.length ? cardsForTab(backburner, 'backburner', films) : `<p class="empty small">Nothing paused right now.</p>`}</div>
     </details>
     <details class="dropdown-group" ${search && upcoming.length ? 'open' : ''}>
       <summary>Possible Upcoming <span class="dropdown-count">${upcoming.length}</span></summary>
-      <div class="dropdown-body">${upcoming.length ? typeGroupedCardsHtml(upcoming, 'upcoming') : `<p class="empty small">Nothing lined up yet.</p>`}</div>
+      <div class="dropdown-body">${upcoming.length ? cardsForTab(upcoming, 'upcoming', films) : `<p class="empty small">Nothing lined up yet.</p>`}</div>
     </details>
     <details class="dropdown-group" ${search && finished.length ? 'open' : ''}>
       <summary>Finished <span class="dropdown-count">${finished.length}</span></summary>
-      <div class="dropdown-body">${finished.length ? typeGroupedCardsHtml(finished, 'finished') : `<p class="empty small">Nothing delivered yet.</p>`}</div>
+      <div class="dropdown-body">${finished.length ? cardsForTab(finished, 'finished', films) : `<p class="empty small">Nothing delivered yet.</p>`}</div>
     </details>
     ${trashed.length ? `
     <details class="dropdown-group">
@@ -2216,7 +2261,7 @@ function renderList(app, tab){
       </div>
     </details>
     ` : ''}
-    ${renderBottomNav('projects')}
+    ${renderBottomNav(films ? 'films' : 'projects')}
   `;
 
   const searchToggle = document.getElementById('searchToggle');
@@ -2241,7 +2286,7 @@ function renderList(app, tab){
       if(!app.dataset.search){ app.dataset.searchOpen = '0'; renderList(app, tab); }
     });
   }
-  document.getElementById('addBtn').addEventListener('click', () => openAddProjectModal());
+  document.getElementById('addBtn').addEventListener('click', () => openAddProjectModal(films ? 'films' : ''));
   app.querySelectorAll('[data-restoreproject]').forEach(btn => {
     btn.addEventListener('click', async () => {
       const p = byId(btn.dataset.restoreproject);
@@ -2299,6 +2344,9 @@ function groupByProjectType(list){
     if(items.length) groups.push({ label: t.label, items });
   });
   return groups;
+}
+function cardsForTab(list, tab, films){
+  return films ? list.map(p => cardHtml(p, tab)).join('') : typeGroupedCardsHtml(list, tab);
 }
 function typeGroupedCardsHtml(list, tab){
   return groupByProjectType(list).map(g => `
@@ -2422,7 +2470,7 @@ function renderDetail(app, p){
   const showHidden = app.dataset.showHidden === '1';
   const totalHidden = (p.steps || []).filter(s => s.hidden).length;
 
-  const stageSections = STAGES.map(stg => {
+  const stageSections = getStages(p).map(stg => {
     const allSteps = (p.steps || []).filter(s => s.stage === stg.key);
     const steps = showHidden ? allSteps : allSteps.filter(s => !s.hidden);
     return `
@@ -2525,10 +2573,10 @@ function renderDetail(app, p){
     ${stageSections}
 
     </div>
-    ${renderBottomNav('projects')}
+    ${renderBottomNav(isFilm(p) ? 'films' : 'projects')}
   `;
 
-  document.getElementById('backBtn').addEventListener('click', () => goTab(p.status));
+  document.getElementById('backBtn').addEventListener('click', () => goTab(isFilm(p) ? 'films' : p.status));
   document.getElementById('projCalBtn').addEventListener('click', () => goProjectCalendar(p.id));
   document.getElementById('renameBtn').addEventListener('click', () => openEditProjectModal(p));
   const ackDetailBtn = document.getElementById('ackDetailNote');
@@ -2696,6 +2744,14 @@ async function propagateLightingToScene(project, shotId, addedEntries){
 // each image lives under its own key (prefix + ':' + imageId) rather than one shared blob for the
 // whole gallery — a gallery can otherwise grow past the per-key storage size limit as images pile
 // up, which is what caused save failures. list() finds a gallery's images without needing an index.
+// just the count of images in a gallery, without fetching the (much heavier) image data itself —
+// used to label a "photos" button so it's obvious there's something to view, not just to add to
+async function countImageSet(keyPrefix){
+  try{
+    const res = await window.storage.list(keyPrefix + ':', true);
+    return res && res.keys ? res.keys.length : 0;
+  }catch(e){ return 0; }
+}
 async function loadImageSet(keyPrefix){
   try{
     const res = await window.storage.list(keyPrefix + ':', true);
@@ -2758,6 +2814,14 @@ function compressImageFile(file, maxDim){
 // galleries (Boarding / Lighting set ups). opts.dock=true makes it behave like a normal step panel
 // (docks to the side, closes whatever else was open); otherwise it layers on top as a plain popup
 // so it can be opened from within an already-open panel (e.g. a shot row inside Shot list).
+// full-size view of a single photo from any gallery — tap the backdrop or the × to close
+function openImageLightbox(dataUrl){
+  const bg = document.createElement('div');
+  bg.className = 'lightbox-bg';
+  bg.innerHTML = `<button type="button" class="lightbox-close" aria-label="Close">&times;</button><img src="${dataUrl}" alt="">`;
+  bg.addEventListener('click', ev => { if(ev.target !== bg.querySelector('img')) bg.remove(); });
+  document.body.appendChild(bg);
+}
 function openImageSetModal(storageKey, title, opts){
   opts = opts || {};
   if(opts.dock) closeSidePanels();
@@ -2774,7 +2838,7 @@ function openImageSetModal(storageKey, title, opts){
           <div class="imgset-grid">
             ${images.map(img => `
               <div class="imgset-thumb">
-                <img src="${img.dataUrl}" alt="">
+                <img src="${img.dataUrl}" alt="" data-viewimg="${img.id}">
                 <button type="button" class="imgset-remove" data-removeimg="${img.id}" aria-label="Remove image">&times;</button>
               </div>
             `).join('')}
@@ -2823,6 +2887,12 @@ function openImageSetModal(storageKey, title, opts){
         paint();
       });
     }
+    bg.querySelectorAll('[data-viewimg]').forEach(img => {
+      img.addEventListener('click', () => {
+        const found = images.find(i => i.id === img.dataset.viewimg);
+        if(found) openImageLightbox(found.dataUrl);
+      });
+    });
     bg.querySelectorAll('[data-removeimg]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const removeId = btn.dataset.removeimg;
@@ -3657,12 +3727,13 @@ function openEditProjectModal(p){
       <div class="field"><label>Status</label>
         <select id="editStatus">${STATUSES.map(s => `<option value="${s.key}" ${p.status===s.key?'selected':''}>${s.label}</option>`).join('')}</select>
       </div>
-      <div class="field"><label>Project type</label>
+      <div class="field" style="${isFilm(p)?'display:none;':''}"><label>Project type</label>
         <select id="editProjectType">${PROJECT_TYPES.map(t => `<option value="${t.key}" ${(p.projectType||'')===t.key?'selected':''}>${t.label}</option>`).join('')}</select>
       </div>
       <div class="field" id="editOtherTypeField" style="${p.projectType==='other'?'':'display:none;'}"><label>What kind of project is it?</label><input type="text" id="editOtherType" placeholder="e.g. Corporate video" value="${esc(p.otherTypeLabel||'')}"></div>
       <div class="field"><label>Project start date</label>${dateFieldHtml('editStart', p.startDate)}</div>
       <div class="field"><label>Delivery date</label>${dateFieldWithNoDeadlineHtml('editDelivery', p.deliveryDate)}</div>
+      ${isFilm(p) ? shootDaysFieldHtml(getShootDates(p)) : ''}
       <div style="margin-top:16px;"><button type="button" class="btn danger" id="deleteProjectBtn" style="width:100%;">Delete this project</button></div>
       <div class="modal-actions">
         <button class="btn ghost" id="cancelEdit" style="flex:1;">Cancel</button>
@@ -3670,7 +3741,8 @@ function openEditProjectModal(p){
       </div>
     </div>`;
   document.body.appendChild(bg);
-  bg.addEventListener('click', ev => {
+  if(isFilm(p)) wireShootDateList(bg);
+  else bg.addEventListener('click', ev => {
     const trigger = ev.target.closest('.dfield');
     if(trigger) openDatePicker(trigger);
   });
@@ -3690,7 +3762,7 @@ function openEditProjectModal(p){
       const ok = await saveProjects();
       bg.remove();
       showToast(ok ? 'Moved to Trash' : 'Failed to move to Trash', !ok);
-      if(ok) goTab('current');
+      if(ok) goTab(isFilm(p) ? 'films' : 'current');
     });
   });
   bg.querySelector('#confirmEdit').addEventListener('click', async () => {
@@ -3702,7 +3774,8 @@ function openEditProjectModal(p){
     const wasBackburner = p.status === 'backburner';
     const nowBackburner = newStatus === 'backburner';
     p.status = newStatus;
-    p.projectType = bg.querySelector('#editProjectType').value;
+    if(!isFilm(p)) p.projectType = bg.querySelector('#editProjectType').value;
+    else p.shootDates = collectShootDates(bg);
     p.otherTypeLabel = p.projectType === 'other' ? bg.querySelector('#editOtherType').value.trim() : '';
     p.startDate = bg.querySelector('#editStart').value;
     p.deliveryDate = bg.querySelector('#editDelivery').value;
@@ -3721,22 +3794,24 @@ function openEditProjectModal(p){
   });
 }
 
-function openAddProjectModal(){
+function openAddProjectModal(section){
+  const films = section === 'films';
   const bg = document.createElement('div');
   bg.className = 'modal-bg';
   bg.innerHTML = `
     <div class="modal">
-      <h3>New project</h3>
-      <div class="field"><label>Name</label><input type="text" id="newName" placeholder="e.g. Rick music video"></div>
+      <h3>${films ? 'New film' : 'New project'}</h3>
+      <div class="field"><label>Name</label><input type="text" id="newName" placeholder="${films ? 'e.g. Short film' : 'e.g. Rick music video'}"></div>
       <div class="field"><label>Status</label>
         <select id="newStatus">${STATUSES.map(s => `<option value="${s.key}">${s.label}</option>`).join('')}</select>
       </div>
-      <div class="field"><label>Project type</label>
+      <div class="field" style="${films?'display:none;':''}"><label>Project type</label>
         <select id="newProjectType">${PROJECT_TYPES.map(t => `<option value="${t.key}">${t.label}</option>`).join('')}</select>
       </div>
       <div class="field" id="newOtherTypeField" style="display:none;"><label>What kind of project is it?</label><input type="text" id="newOtherType" placeholder="e.g. Corporate video"></div>
       <div class="field"><label>Project start date</label>${dateFieldHtml('newStart', '')}</div>
       <div class="field"><label>Delivery date</label>${dateFieldWithNoDeadlineHtml('newDelivery', '')}</div>
+      ${films ? shootDaysFieldHtml([]) : ''}
       <div class="modal-actions">
         <button class="btn ghost" id="cancelAdd" style="flex:1;">Cancel</button>
         <button class="btn primary" id="confirmAdd" style="flex:1;">Add</button>
@@ -3744,7 +3819,8 @@ function openAddProjectModal(){
     </div>`;
   document.body.appendChild(bg);
   wireNoDeadlineToggle(bg, 'newDelivery');
-  bg.addEventListener('click', ev => {
+  if(films) wireShootDateList(bg);
+  else bg.addEventListener('click', ev => {
     const trigger = ev.target.closest('.dfield');
     if(trigger) openDatePicker(trigger);
   });
@@ -3764,7 +3840,8 @@ function openAddProjectModal(){
     const startDate = bg.querySelector('#newStart').value;
     const deliveryDate = bg.querySelector('#newDelivery').value;
     const now = new Date().toISOString();
-    const project = { id: uid(), name, status, projectType, otherTypeLabel, startDate, shootDates: [], deliveryDate, steps: makeDefaultSteps(projectType), updatedAt: now };
+    const project = { id: uid(), name, status, projectType, otherTypeLabel, startDate, shootDates: films ? collectShootDates(bg) : [], deliveryDate, steps: makeDefaultSteps(projectType, section), updatedAt: now };
+    if(films) project.section = 'films';
     const confirmBtn = bg.querySelector('#confirmAdd');
     confirmBtn.disabled = true;
     confirmBtn.textContent = 'Adding…';
@@ -3780,7 +3857,7 @@ function openAddProjectModal(){
       return;
     }
     bg.remove();
-    showToast('Project added with standard steps');
+    showToast(films ? 'Film added with standard steps' : 'Project added with standard steps');
     goProject(project.id);
   });
 }
@@ -6398,8 +6475,10 @@ function openDesignsModal(project, step, sideRight){
   if(!designs.length) designs.push({ id: uid(), text:'' });
   const bg = document.createElement('div');
   bg.className = 'modal-bg' + (sideRight ? ' side-right' : '');
+  const photoCounts = {}; // designId -> count, filled in asynchronously after first paint
 
   function designRowHtml(d, i){
+    const count = photoCounts[d.id] || 0;
     return `
       <div class="design-row" data-design="${d.id}">
         <div class="design-row-top">
@@ -6407,7 +6486,7 @@ function openDesignsModal(project, step, sideRight){
           <button type="button" class="mo-btn" data-removedesign="${d.id}" aria-label="Remove design">&times;</button>
         </div>
         <textarea class="design-text" placeholder="Describe this design…">${esc(d.text || '')}</textarea>
-        <button type="button" class="btn small" data-designphoto="${d.id}">📷 Attach photo</button>
+        <button type="button" class="btn small" data-designphoto="${d.id}">📷 ${count ? `${count} photo${count===1?'':'s'}` : 'Add photos'}</button>
       </div>`;
   }
 
@@ -6415,6 +6494,17 @@ function openDesignsModal(project, step, sideRight){
     bg.querySelectorAll('.design-row').forEach(row => {
       const d = designs.find(x => x.id === row.dataset.design);
       if(d) d.text = row.querySelector('.design-text').value;
+    });
+  }
+
+  function refreshPhotoCounts(){
+    mapWithConcurrency(designs, 8, async d => {
+      photoCounts[d.id] = await countImageSet(designImageKey(project.id, d.id));
+    }).then(() => {
+      bg.querySelectorAll('[data-designphoto]').forEach(btn => {
+        const count = photoCounts[btn.dataset.designphoto] || 0;
+        btn.textContent = `📷 ${count ? `${count} photo${count===1?'':'s'}` : 'Add photos'}`;
+      });
     });
   }
 
@@ -6431,6 +6521,7 @@ function openDesignsModal(project, step, sideRight){
       </div>`;
     autoGrowAll(bg);
     wire();
+    refreshPhotoCounts();
   }
 
   function wire(){
@@ -6450,7 +6541,14 @@ function openDesignsModal(project, step, sideRight){
     });
     bg.querySelectorAll('[data-designphoto]').forEach(btn => {
       btn.addEventListener('click', () => {
-        openImageSetModal(designImageKey(project.id, btn.dataset.designphoto), 'Design photo', {});
+        const designId = btn.dataset.designphoto;
+        openImageSetModal(designImageKey(project.id, designId), 'Design photos', {
+          onClose: (images) => {
+            photoCounts[designId] = images.length;
+            const liveBtn = bg.querySelector(`[data-designphoto="${designId}"]`);
+            if(liveBtn) liveBtn.textContent = `📷 ${images.length ? `${images.length} photo${images.length===1?'':'s'}` : 'Add photos'}`;
+          },
+        });
       });
     });
     bg.querySelector('#dsSave').addEventListener('click', async () => {
@@ -6874,7 +6972,7 @@ function openDuplicateStepModal(project, step){
     <div class="modal">
       <h3>Duplicate "${esc(step.title || 'Untitled step')}"</h3>
       <div class="field"><label>Stage</label>
-        <select id="dupStage">${STAGES.map(s => `<option value="${s.key}" ${s.key===step.stage?'selected':''}>${s.label}</option>`).join('')}</select>
+        <select id="dupStage">${getStages(project).map(s => `<option value="${s.key}" ${s.key===step.stage?'selected':''}>${s.label}</option>`).join('')}</select>
       </div>
       <div class="field"><label>Position</label><select id="dupPosition">${positionOptionsHtml(project, step.stage, 'after:'+step.id)}</select></div>
       <div class="modal-actions">
@@ -6934,7 +7032,7 @@ function openStepModal(project, step, presetStage, sideRight){
           <option value="standard" ${stepType==='standard'?'selected':''}>Standard</option>
         </select>
       </div>
-      <div class="field" id="stDescField" style="${stepType==='checklist_description'?'':'display:none;'}">
+      <div class="field" id="stDescField">
         <label>Description</label>
         <textarea id="stDesc" placeholder="What needs to happen at this step…">${esc(step ? step.description : '')}</textarea>
       </div>
@@ -6977,10 +7075,8 @@ function openStepModal(project, step, presetStage, sideRight){
 
   const typeSel = bg.querySelector('#stStepType');
   const checklistField = bg.querySelector('#stChecklistField');
-  const descField = bg.querySelector('#stDescField');
   typeSel.addEventListener('change', () => {
     checklistField.style.display = (typeSel.value === 'checklist' || typeSel.value === 'checklist_description') ? '' : 'none';
-    descField.style.display = typeSel.value === 'checklist_description' ? '' : 'none';
   });
   const checklistList = bg.querySelector('#stChecklistList');
   bg.querySelector('#stAddChecklistItem').addEventListener('click', () => {
