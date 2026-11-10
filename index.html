@@ -932,9 +932,13 @@ const FILM_DEFAULT_STEPS = [
   {title:'Script', stage:'pre', scriptForm:true},
   {title:'Timeline', stage:'pre', timelineForm:true},
   {title:'Location scout', stage:'pre', locationForm:true},
+  {title:'Costumes', stage:'pre'},
+  {title:'Props', stage:'pre'},
   {title:'Pre-vis', stage:'pre'},
   {title:'Shot list', stage:'pre', shotlistForm:true},
   {title:'Lighting set ups', stage:'pre'},
+  {title:'VFX', stage:'pre'},
+  {title:'Tests', stage:'pre', testsForm:true},
   {title:'Shooting schedule of day', stage:'pre', scheduleForm:true},
   {title:'Shooting day', stage:'prod'},
   {title:'Filling in DIT', stage:'prod'},
@@ -944,6 +948,7 @@ const FILM_DEFAULT_STEPS = [
   {title:'Assembly cut', stage:'post'},
   {title:'Refined cut', stage:'post'},
   {title:'Picture lock', stage:'post'},
+  {title:'VFX', stage:'post'},
   {title:'Audio', stage:'post'},
   {title:'Color correct', stage:'post'},
   {title:'Grade', stage:'post'},
@@ -1783,6 +1788,45 @@ function migrateProjectSteps(project){
     changed = true;
   }
 
+  // existing films get Costumes/Props/VFX once (flagged, so deleting them later sticks)
+  if(isFilm(project) && !project.filmPreAdded){
+    const mk = t => ({ id: uid(), title: t, stage:'pre', hidden:false, date:'', progressNote:'', done:false, stepType:'standard', checklist:[], meetings:[], updatedAt: new Date().toISOString() });
+    const has = t => project.steps.some(x => x.stage === 'pre' && (x.title||'').trim().toLowerCase() === t.toLowerCase());
+    const before = (anchor, t) => {
+      if(has(t)) return;
+      const i = project.steps.findIndex(x => (x.title||'').trim().toLowerCase() === anchor);
+      const step = mk(t);
+      if(i === -1){
+        const lastPre = project.steps.map(x => x.stage).lastIndexOf('pre');
+        project.steps.splice(lastPre + 1, 0, step);
+      } else project.steps.splice(i, 0, step);
+    };
+    before('pre-vis','Costumes');
+    before('pre-vis','Props');
+    before('shooting schedule of day','VFX');
+    project.filmPreAdded = true;
+    changed = true;
+  }
+  if(isFilm(project) && !project.filmPostVfxAdded){
+    if(!project.steps.some(x => x.stage === 'post' && (x.title||'').trim().toLowerCase() === 'vfx')){
+      const step = { id: uid(), title:'VFX', stage:'post', hidden:false, date:'', progressNote:'', done:false, stepType:'standard', checklist:[], meetings:[], updatedAt: new Date().toISOString() };
+      let i = project.steps.findIndex(x => (x.title||'').trim().toLowerCase() === 'picture lock');
+      if(i === -1) i = project.steps.map(x => x.stage).lastIndexOf('post') - 1;
+      project.steps.splice(i + 1, 0, step);
+    }
+    project.filmPostVfxAdded = true;
+    changed = true;
+  }
+  if(isFilm(project) && !project.filmTestsAdded){
+    if(!project.steps.some(x => x.stage === 'pre' && (x.title||'').trim().toLowerCase() === 'tests')){
+      const step = { id: uid(), title:'Tests', stage:'pre', testsForm:true, hidden:false, date:'', progressNote:'', done:false, stepType:'standard', checklist:[], meetings:[], updatedAt: new Date().toISOString() };
+      let i = project.steps.findIndex(x => (x.title||'').trim().toLowerCase() === 'shooting schedule of day');
+      if(i === -1) i = project.steps.map(x => x.stage).lastIndexOf('pre') + 1;
+      project.steps.splice(i, 0, step);
+    }
+    project.filmTestsAdded = true;
+    changed = true;
+  }
   const now = new Date().toISOString();
   let insertAfterIndex = -1;
   const skip = SKIPPED_STEPS_BY_TYPE[project.projectType] || [];
@@ -3841,7 +3885,7 @@ function openAddProjectModal(section){
     const deliveryDate = bg.querySelector('#newDelivery').value;
     const now = new Date().toISOString();
     const project = { id: uid(), name, status, projectType, otherTypeLabel, startDate, shootDates: films ? collectShootDates(bg) : [], deliveryDate, steps: makeDefaultSteps(projectType, section), updatedAt: now };
-    if(films) project.section = 'films';
+    if(films){ project.section = 'films'; project.filmPreAdded = true; project.filmPostVfxAdded = true; project.filmTestsAdded = true; }
     const confirmBtn = bg.querySelector('#confirmAdd');
     confirmBtn.disabled = true;
     confirmBtn.textContent = 'Adding…';
