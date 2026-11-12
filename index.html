@@ -78,6 +78,13 @@
     outline:none; overflow-y:auto; color:var(--text);
   }
   .script-textarea:focus{outline:2px solid var(--amber); outline-offset:1px;}
+  .todo-handle{cursor:grab; touch-action:none; user-select:none; color:var(--text-dim); font-size:16px; letter-spacing:-3px; padding:4px 6px 4px 0; line-height:1;}
+  .todo-handle:active{cursor:grabbing;}
+  [data-todo].dragging{opacity:.55; background:var(--panel);}
+  .script-link{cursor:pointer; border-bottom:2px solid var(--amber); background:rgba(0,156,222,0.10); border-radius:2px;}
+  .script-link.prop{border-bottom-color:var(--pre); background:rgba(201,130,30,0.12);}
+  .script-link:hover{background:rgba(0,156,222,0.25);}
+  .script-link.prop:hover{background:rgba(201,130,30,0.28);}
   .script-toolbar{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;}
   .script-toolbar-label{font-family:var(--mono); font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.04em;}
   .script-hint{font-family:var(--mono); font-size:11px; color:var(--text-dim); margin-bottom:10px;}
@@ -388,7 +395,9 @@
   .supply-row .supply-ordered{flex:none; width:18px; height:18px; margin:0;}
   .supply-row .supply-name{flex:1.4; min-width:0;}
   .supply-row .supply-link{flex:1.4; min-width:0;}
+  .supply-row .supply-qty{flex:0 0 56px; min-width:0; text-align:center;}
   .supply-row .supply-cost{flex:0 0 80px; min-width:0;}
+  .supply-row .supply-total{flex:0 0 64px; font-family:var(--mono); font-size:11.5px; font-weight:700; color:var(--text-dim); text-align:right;}
   .supply-row .equip-name{flex:1; min-width:0;}
   .supply-row .equip-ready{flex:none; width:18px; height:18px; margin:0;}
   .supply-row .extracost-label{flex:1.4; min-width:0;}
@@ -1024,6 +1033,12 @@ function isCostStep(step){
 }
 function isEquipmentStep(step){
   return !!step.equipmentForm || (step.title || '').trim().toLowerCase() === 'equipment';
+}
+function isCostumesStep(step){
+  return (step.title || '').trim().toLowerCase() === 'costumes' && (step.stage === 'pre');
+}
+function isPropsStep(step){
+  return (step.title || '').trim().toLowerCase() === 'props' && (step.stage === 'pre');
 }
 function isOverviewStep(step){
   return !!step.overviewForm || (step.title || '').trim().toLowerCase() === 'overview';
@@ -2086,6 +2101,7 @@ async function openTodoListModal(){
   function todoRowHtml(item){
     return `
       <label class="checklist-view-row" data-todo="${item.id}">
+        <span class="todo-handle" title="Drag to reorder" aria-label="Drag to reorder">&#8942;&#8942;</span>
         <input type="checkbox" class="todo-done" ${item.done ? 'checked' : ''}>
         <span class="citem-label${item.done ? ' done' : ''}">${esc(item.text)}</span>
         <button type="button" class="mo-btn todo-remove" aria-label="Remove item">&times;</button>
@@ -2107,7 +2123,42 @@ async function openTodoListModal(){
     bg.querySelector('#todoNewText').focus();
   }
 
+  // drag-to-reorder via pointer events (works with mouse and touch); order saved on release
+  function wireDrag(){
+    const list = bg.querySelector('#todoRows');
+    list.querySelectorAll('.todo-handle').forEach(h => {
+      h.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); });
+      h.addEventListener('pointerdown', ev => {
+        ev.preventDefault();
+        const row = h.closest('[data-todo]');
+        row.classList.add('dragging');
+        try{ h.setPointerCapture(ev.pointerId); }catch(e){}
+        const move = e => {
+          const el = document.elementFromPoint(e.clientX, e.clientY);
+          const over = el && el.closest && el.closest('[data-todo]');
+          if(!over || over === row || over.parentNode !== list) return;
+          const r = over.getBoundingClientRect();
+          if(e.clientY < r.top + r.height / 2) list.insertBefore(row, over);
+          else list.insertBefore(row, over.nextSibling);
+        };
+        const up = async () => {
+          h.removeEventListener('pointermove', move);
+          h.removeEventListener('pointerup', up);
+          h.removeEventListener('pointercancel', up);
+          row.classList.remove('dragging');
+          const order = [...list.querySelectorAll('[data-todo]')].map(r => r.dataset.todo);
+          items = order.map(id => items.find(i => i.id === id)).filter(Boolean);
+          await saveTodoList(items);
+        };
+        h.addEventListener('pointermove', move);
+        h.addEventListener('pointerup', up);
+        h.addEventListener('pointercancel', up);
+      });
+    });
+  }
+
   function wire(){
+    wireDrag();
     const input = bg.querySelector('#todoNewText');
     input.addEventListener('keydown', async ev => {
       if(ev.key !== 'Enter') return;
@@ -2653,6 +2704,8 @@ function renderDetail(app, p){
       else if(isTestsStep(step)) openTestsModal(p, step, true);
       else if(isSuppliesStep(step)) openSuppliesModal(p, step, true);
       else if(isEquipmentStep(step)) openEquipmentModal(p, step, true);
+      else if(isCostumesStep(step)) openCostumesModal(p, step, true);
+      else if(isPropsStep(step)) openPropsModal(p, step, true);
       else if(isCostStep(step)) openCostModal(p, step, true);
       else if(stepHasChecklist(step)) openStepDetailModal(p, step, true);
     });
@@ -3178,6 +3231,8 @@ async function renderMoodboard(app, project, step){
       <div style="padding-top:16px;">
       <button class="back" id="mbBack">← ${esc(project.name)}</button>
       ${stepDateRangeFieldHtml(step, 'mb')}
+      <div class="field"><label>Initial ideas</label><textarea id="mbInitial" rows="4" placeholder="Early, unfiltered ideas…">${esc(board.initialIdeas||'')}</textarea></div>
+      <div class="field"><label>Refined ideas</label><textarea id="mbRefined" rows="4" placeholder="The ideas you're narrowing in on…">${esc(board.refinedIdeas||'')}</textarea></div>
       <div class="mboard-toolbar">
         <div>
           <div class="mboard-title">${esc(step.title || 'Step')}</div>
@@ -3248,6 +3303,17 @@ async function renderMoodboard(app, project, step){
     const ink = document.getElementById('mbInk');
 
     document.getElementById('mbBack').addEventListener('click', () => goProject(project.id));
+    [['mbInitial','initialIdeas'],['mbRefined','refinedIdeas']].forEach(([id, key]) => {
+      const el = document.getElementById(id);
+      if(!el) return;
+      autoGrow(el);
+      el.addEventListener('input', () => autoGrow(el));
+      el.addEventListener('blur', async () => {
+        if((board[key] || '') === el.value) return;
+        board[key] = el.value;
+        await commit();
+      });
+    });
     const notesEl = document.getElementById('mbNotes');
     if(notesEl) notesEl.addEventListener('blur', async () => {
       if(board.notes === notesEl.value) return;
@@ -4308,6 +4374,8 @@ function openTimelineModal(project, timelineStepId, sideRight){
     else if(isTestsStep(step)) openTestsModal(project, step, true);
     else if(isSuppliesStep(step)) openSuppliesModal(project, step, true);
     else if(isEquipmentStep(step)) openEquipmentModal(project, step, true);
+    else if(isCostumesStep(step)) openCostumesModal(project, step, true);
+    else if(isPropsStep(step)) openPropsModal(project, step, true);
     else if(isCostStep(step)) openCostModal(project, step, true);
     else if(isOverviewStep(step)) openProjectOverviewModal(project, step, true);
     else if(stepHasChecklist(step)) openStepDetailModal(project, step, true);
@@ -4938,8 +5006,9 @@ function openScriptModal(project, step, sideRight){
         <button type="button" class="pen-swatch clear-swatch" id="scClearColor" aria-label="Clear color" title="Clear color">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 5l14 14M19 5L5 19"/></svg>
         </button>
+        <button type="button" class="btn small" id="scLinkToggle" style="margin-left:auto;">Linked view</button>
       </div>
-      <div class="script-hint">Select some text, then tap a color to mark it as a change.</div>
+      <div class="script-hint" id="scHint">Select some text, then tap a color to mark it as a change.</div>
       <div class="field">
         <div id="scEditor" class="script-textarea" contenteditable="true">${initialHtml}</div>
       </div>
@@ -4982,9 +5051,46 @@ function openScriptModal(project, step, sideRight){
     document.execCommand('foreColor', false, '#17181a');
   });
 
+  // linked view: costume/prop names become clickable and open that item in its tab
+  let linked = false, rawHtml = '';
+  const linkBtn = bg.querySelector('#scLinkToggle');
+  const hint = bg.querySelector('#scHint');
+  async function setLinked(on){
+    if(on === linked) return;
+    if(on){
+      rawHtml = editor.innerHTML;
+      const targets = scriptLinkTargets(project);
+      editor.innerHTML = linkifyScriptHtml(rawHtml, targets);
+      editor.contentEditable = 'false';
+      linkBtn.textContent = 'Edit script';
+      hint.textContent = targets.length ? 'Tap a highlighted costume or prop to open it.' : 'Add costumes or props first (their names are matched in the script).';
+      // keep the text typed so far, since opening a link switches panels
+      step.scriptHtml = rawHtml; step.scriptText = editor.innerText;
+      step.updatedAt = new Date().toISOString(); project.updatedAt = step.updatedAt;
+      saveProjects();
+    } else {
+      editor.innerHTML = rawHtml;
+      editor.contentEditable = 'true';
+      linkBtn.textContent = 'Linked view';
+      hint.textContent = 'Select some text, then tap a color to mark it as a change.';
+    }
+    linked = on;
+  }
+  linkBtn.addEventListener('click', () => setLinked(!linked));
+  editor.addEventListener('click', ev => {
+    const link = ev.target.closest && ev.target.closest('.script-link');
+    if(!linked || !link) return;
+    const targets = scriptLinkTargets(project);
+    const t = targets.find(x => x.kind === link.dataset.linkkind && x.item.id === link.dataset.linkitem);
+    if(!t) return;
+    if(t.kind === 'costume') openCostumesModal(project, t.step, true, t.item.id);
+    else openPropsModal(project, t.step, true, t.item.id);
+  });
+
   bg.querySelector('#scCancel').addEventListener('click', () => bg.remove());
   bg.addEventListener('click', ev => { if(ev.target === bg) bg.remove(); });
   bg.querySelector('#scSave').addEventListener('click', async () => {
+    if(linked) await setLinked(false);
     step.scriptHtml = editor.innerHTML;
     step.scriptText = editor.innerText; // plain-text mirror, kept for anything that only reads scriptText
     step.updatedAt = new Date().toISOString();
@@ -6698,6 +6804,12 @@ function openTestsModal(project, step, sideRight){
   paint();
 }
 
+function supplyQty(s){ const q = parseFloat(s.qty); return q > 0 ? q : 1; }
+function supplyLineTotalText(s){
+  const c = parseFloat(s.cost);
+  if(isNaN(c)) return '';
+  return supplyQty(s) !== 1 || s.qty ? fmtMoney(c * supplyQty(s)) : '';
+}
 function openSuppliesModal(project, step, sideRight){
   closeSidePanels();
   let supplies = (step.supplies || []).map(s => ({ ...s }));
@@ -6710,8 +6822,10 @@ function openSuppliesModal(project, step, sideRight){
       <div class="supply-row" data-supply="${s.id}">
         <input type="checkbox" class="supply-ordered" title="Ordered" ${s.ordered ? 'checked' : ''}>
         <input type="text" class="supply-name" placeholder="Material or item" value="${esc(s.name || '')}">
+        <input type="number" step="1" min="1" class="supply-qty" placeholder="Qty" title="Quantity" value="${esc(s.qty || '')}">
         <input type="text" class="supply-link" placeholder="Link" value="${esc(s.link || '')}">
-        <input type="number" step="0.01" min="0" class="supply-cost" placeholder="Cost" value="${esc(s.cost || '')}">
+        <input type="number" step="0.01" min="0" class="supply-cost" placeholder="Each" title="Cost each" value="${esc(s.cost || '')}">
+        <span class="supply-total" title="Quantity × cost each">${supplyLineTotalText(s)}</span>
         <button type="button" class="mo-btn" data-removesupply="${s.id}" aria-label="Remove item">&times;</button>
       </div>`;
   }
@@ -6723,6 +6837,7 @@ function openSuppliesModal(project, step, sideRight){
         s.name = row.querySelector('.supply-name').value;
         s.link = row.querySelector('.supply-link').value;
         s.cost = row.querySelector('.supply-cost').value;
+        s.qty = row.querySelector('.supply-qty').value;
         s.ordered = row.querySelector('.supply-ordered').checked;
       }
     });
@@ -6732,7 +6847,7 @@ function openSuppliesModal(project, step, sideRight){
     bg.innerHTML = `
       <div class="modal">
         <h3>Supplies</h3>
-        <div class="script-hint">Tick the box once an item's been ordered.</div>
+        <div class="script-hint">Tick the box once an item's been ordered. Type a quantity and the cost each — the total is worked out for you.</div>
         <div id="supplyRows">${supplies.map(supplyRowHtml).join('')}</div>
         <button type="button" class="btn small" id="spAddSupply" style="width:100%; margin-top:6px;">+ Add item</button>
         <div class="modal-actions">
@@ -6745,10 +6860,18 @@ function openSuppliesModal(project, step, sideRight){
   }
 
   function wire(){
+    bg.querySelectorAll('.supply-row').forEach(row => {
+      const upd = () => {
+        const tmp = { qty: row.querySelector('.supply-qty').value, cost: row.querySelector('.supply-cost').value };
+        row.querySelector('.supply-total').textContent = supplyLineTotalText(tmp);
+      };
+      row.querySelector('.supply-qty').addEventListener('input', upd);
+      row.querySelector('.supply-cost').addEventListener('input', upd);
+    });
     bg.querySelector('#spCancel').addEventListener('click', () => bg.remove());
     bg.querySelector('#spAddSupply').addEventListener('click', () => {
       syncFromDom();
-      supplies.push({ id: uid(), name:'', link:'', cost:'', ordered:false });
+      supplies.push({ id: uid(), name:'', qty:'', link:'', cost:'', ordered:false });
       paint();
     });
     bg.querySelectorAll('[data-removesupply]').forEach(btn => {
@@ -6775,6 +6898,178 @@ function openSuppliesModal(project, step, sideRight){
   paint();
 }
 
+function itemImageKey(projectId, itemId){ return 'itemimg:' + projectId + ':' + itemId; }
+const ITEM_KINDS = {
+  costume: { field:'costumes', heading:'Costumes', one:'costume', titlePh:"Costume (e.g. Lead's jacket)", descPh:'Description — look, colours, fit, where to get it…' },
+  prop:    { field:'props',    heading:'Props',    one:'prop',    titlePh:'Prop (e.g. Old letter)',          descPh:'Description — look, size, where to get it, who handles it…' },
+};
+// opens the Costumes or Props step panel; focusId scrolls to and highlights one item (used by script links)
+function openItemsModal(project, step, kind, sideRight, focusId){
+  closeSidePanels();
+  const K = ITEM_KINDS[kind];
+  const blank = () => ({ id: uid(), title:'', aliases:'', description:'' });
+  let items = (step[K.field] || []).map(i => ({ ...i }));
+  if(!items.length) items.push(blank());
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg' + (sideRight ? ' side-right' : '');
+  const photoCounts = {};
+  const photoLabel = n => `📷 ${n ? `${n} photo${n===1?'':'s'}` : 'Add photos'}`;
+
+  function rowHtml(i){
+    return `
+      <div class="field item-row" data-item="${i.id}" style="border:1px solid var(--line); border-radius:10px; padding:10px; margin-bottom:10px;">
+        <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+          <input type="text" class="item-title" placeholder="${esc(K.titlePh)}" value="${esc(i.title || '')}" style="flex:1;">
+          <button type="button" class="mo-btn" data-removeitem="${i.id}" aria-label="Remove ${K.one}">&times;</button>
+        </div>
+        <textarea class="item-desc" rows="3" placeholder="${esc(K.descPh)}" style="margin-bottom:6px;">${esc(i.description || '')}</textarea>
+        <input type="text" class="item-aliases" placeholder="Also called in the script (comma separated, optional)" value="${esc(i.aliases || '')}" style="margin-bottom:6px;">
+        <button type="button" class="btn small" data-itemphoto="${i.id}">${photoLabel(photoCounts[i.id] || 0)}</button>
+      </div>`;
+  }
+  function syncFromDom(){
+    bg.querySelectorAll('[data-item]').forEach(row => {
+      const i = items.find(x => x.id === row.dataset.item);
+      if(i){
+        i.title = row.querySelector('.item-title').value;
+        i.description = row.querySelector('.item-desc').value;
+        i.aliases = row.querySelector('.item-aliases').value;
+      }
+    });
+  }
+  function refreshPhotoCounts(){
+    mapWithConcurrency(items, 8, async i => {
+      photoCounts[i.id] = await countImageSet(itemImageKey(project.id, i.id));
+    }).then(() => {
+      bg.querySelectorAll('[data-itemphoto]').forEach(btn => {
+        btn.textContent = photoLabel(photoCounts[btn.dataset.itemphoto] || 0);
+      });
+    });
+  }
+  function paint(focus){
+    bg.innerHTML = `
+      <div class="modal">
+        <h3>${esc(step.title || K.heading)}</h3>
+        <div id="itemRows">${items.map(rowHtml).join('')}</div>
+        <button type="button" class="btn small" id="itAdd" style="width:100%; margin-top:6px;">+ Add ${K.one}</button>
+        <div class="modal-actions">
+          <button class="btn ghost" id="itCancel" style="flex:1;">Cancel</button>
+          <button class="btn primary" id="itSave" style="flex:1;">Save</button>
+        </div>
+      </div>`;
+    autoGrowAll(bg);
+    wire();
+    refreshPhotoCounts();
+    if(focus){
+      const row = bg.querySelector(`[data-item="${focus}"]`);
+      if(row){
+        if(row.scrollIntoView) row.scrollIntoView({ block:'center' });
+        row.style.outline = '2px solid var(--amber)';
+        setTimeout(() => { row.style.outline = ''; }, 1600);
+      }
+    }
+  }
+  async function persist(){
+    syncFromDom();
+    step[K.field] = items.filter(i => i.title.trim() || i.description.trim());
+    step.updatedAt = new Date().toISOString();
+    project.updatedAt = step.updatedAt;
+    return saveProjects();
+  }
+  function wire(){
+    bg.querySelector('#itCancel').addEventListener('click', () => bg.remove());
+    bg.querySelector('#itAdd').addEventListener('click', () => {
+      syncFromDom();
+      const n = blank();
+      items.push(n);
+      paint();
+      const t = bg.querySelector(`[data-item="${n.id}"] .item-title`);
+      if(t) t.focus();
+    });
+    bg.querySelectorAll('[data-removeitem]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        syncFromDom();
+        items = items.filter(i => i.id !== btn.dataset.removeitem);
+        if(!items.length) items.push(blank());
+        paint();
+      });
+    });
+    bg.querySelectorAll('[data-itemphoto]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.itemphoto;
+        openImageSetModal(itemImageKey(project.id, id), K.heading.slice(0, -1) + ' photos', {
+          onClose: (images) => {
+            photoCounts[id] = images.length;
+            const live = bg.querySelector(`[data-itemphoto="${id}"]`);
+            if(live) live.textContent = photoLabel(images.length);
+          },
+        });
+      });
+    });
+    bg.querySelector('#itSave').addEventListener('click', async () => {
+      const ok = await persist();
+      bg.remove();
+      showToast(ok ? 'Saved' : 'Save failed', !ok);
+      render();
+    });
+  }
+  bg.addEventListener('click', ev => { if(ev.target === bg) bg.remove(); });
+  presentPanel(bg, step.id);
+  paint(focusId);
+}
+function openCostumesModal(project, step, sideRight, focusId){ openItemsModal(project, step, 'costume', sideRight, focusId); }
+function openPropsModal(project, step, sideRight, focusId){ openItemsModal(project, step, 'prop', sideRight, focusId); }
+// every costume/prop that can be linked from the script: {kind, step, item, names[]}
+function scriptLinkTargets(project){
+  const out = [];
+  [['costume', isCostumesStep, 'costumes'], ['prop', isPropsStep, 'props']].forEach(([kind, test, field]) => {
+    const st = (project.steps || []).find(test);
+    if(!st) return;
+    (st[field] || []).forEach(item => {
+      const names = [item.title, ...String(item.aliases || '').split(',')].map(x => (x||'').trim()).filter(x => x.length >= 2);
+      if(names.length) out.push({ kind, step: st, item, names });
+    });
+  });
+  return out;
+}
+// wraps matching names inside already-rendered script html in clickable spans (text nodes only,
+// so the coloured edit marks survive)
+function linkifyScriptHtml(html, targets){
+  const box = document.createElement('div');
+  box.innerHTML = html;
+  const pairs = [];
+  targets.forEach((t, ti) => t.names.forEach(n => pairs.push({ n, ti })));
+  if(!pairs.length) return box.innerHTML;
+  pairs.sort((a, b) => b.n.length - a.n.length);
+  const re = new RegExp('(?<![A-Za-z0-9])(' + pairs.map(p => p.n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')(?![A-Za-z0-9])', 'gi');
+  const lookup = {};
+  pairs.forEach(p => { const k = p.n.toLowerCase(); if(!(k in lookup)) lookup[k] = p.ti; });
+  const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while(walker.nextNode()) nodes.push(walker.currentNode);
+  nodes.forEach(node => {
+    const text = node.nodeValue;
+    re.lastIndex = 0;
+    if(!re.test(text)) return;
+    re.lastIndex = 0;
+    const frag = document.createDocumentFragment();
+    let last = 0, m;
+    while((m = re.exec(text))){
+      if(m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      const t = targets[lookup[m[1].toLowerCase()]];
+      const span = document.createElement('span');
+      span.className = 'script-link ' + t.kind;
+      span.dataset.linkkind = t.kind;
+      span.dataset.linkitem = t.item.id;
+      span.textContent = m[1];
+      frag.appendChild(span);
+      last = m.index + m[1].length;
+    }
+    if(last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  });
+  return box.innerHTML;
+}
 function openEquipmentModal(project, step, sideRight){
   closeSidePanels();
   let items = (step.equipmentItems || []).map(i => ({ ...i }));
@@ -6854,7 +7149,7 @@ function computeSupplyCosts(project){
   const suppliesStep = (project.steps || []).find(isSuppliesStep);
   return ((suppliesStep && suppliesStep.supplies) || [])
     .filter(s => s.cost !== '' && s.cost != null && !isNaN(parseFloat(s.cost)))
-    .map(s => ({ label: s.name || 'Untitled item', amount: parseFloat(s.cost) || 0 }));
+    .map(s => ({ label: (s.name || 'Untitled item') + (supplyQty(s) !== 1 ? ' × ' + supplyQty(s) : ''), amount: (parseFloat(s.cost) || 0) * supplyQty(s) }));
 }
 function openCostModal(project, step, sideRight){
   closeSidePanels();
