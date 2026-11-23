@@ -2093,7 +2093,7 @@ async function saveTodoList(items){
 // a quick, freeform daily checklist — separate from any project, just type and go
 const INVENTORY_KEY = 'inventory-v1';
 const INVENTORY_CATS_KEY = 'inventory-categories-v1';
-const DEFAULT_INVENTORY_CATS = ['3D printer filament', 'Locking mechanisms', 'Tools'];
+const DEFAULT_INVENTORY_CATS = ['3D printer filament', 'Locking mechanisms', 'Tools', 'Components'];
 async function loadInventory(){
   try{
     const res = await window.storage.get(INVENTORY_KEY, true);
@@ -2138,6 +2138,7 @@ async function renderInventoryPage(app){
   let renamed = false;
   cats = cats.map(c => c === 'Nuts and bolts' ? (renamed = true, 'Locking mechanisms') : c);
   cats = cats.filter((c, i) => cats.indexOf(c) === i);
+  if(!cats.some(c => c.toLowerCase() === 'components')){ cats.push('Components'); renamed = true; } // no category delete yet, so always keep it
   items.forEach(i => { if(i.category === 'Nuts and bolts'){ i.category = 'Locking mechanisms'; renamed = true; } });
   function queueSave(){
     clearTimeout(saveTimer);
@@ -7712,7 +7713,8 @@ function openStepModal(project, step, presetStage, sideRight){
 
 async function refreshAndRender(){
   if(document.querySelector('.modal-bg')) return;
-  if(getRoute().view !== 'list') return;
+  const r = getRoute();
+  if(r.view !== 'list' || r.tab === 'inventory') return; // inventory page isn't project data; re-rendering would wipe what's being typed
   await loadProjects();
   render();
 }
