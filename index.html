@@ -78,7 +78,7 @@
     outline:none; overflow-y:auto; color:var(--text);
   }
   .script-textarea:focus{outline:2px solid var(--amber); outline-offset:1px;}
-  .todo-handle{cursor:grab; touch-action:none; user-select:none; color:var(--text-dim); font-size:16px; letter-spacing:-3px; padding:4px 6px 4px 0; line-height:1;}
+  .todo-handle{cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; color:var(--text-dim); font-size:18px; letter-spacing:-3px; padding:8px 10px 8px 2px; line-height:1; flex:none;}
   .todo-handle:active{cursor:grabbing;}
   [data-todo].dragging{opacity:.55; background:var(--panel);}
   .script-link{cursor:pointer; border-bottom:2px solid var(--amber); background:rgba(0,156,222,0.10); border-radius:2px;}
@@ -2091,6 +2091,204 @@ async function saveTodoList(items){
   catch(e){ console.error('todo list save failed', e); return false; }
 }
 // a quick, freeform daily checklist — separate from any project, just type and go
+const INVENTORY_KEY = 'inventory-v1';
+const INVENTORY_CATS_KEY = 'inventory-categories-v1';
+const DEFAULT_INVENTORY_CATS = ['3D printer filament', 'Locking mechanisms', 'Tools'];
+async function loadInventory(){
+  try{
+    const res = await window.storage.get(INVENTORY_KEY, true);
+    const parsed = res && res.value ? JSON.parse(res.value) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  }catch(e){ return []; }
+}
+async function saveInventory(items){
+  try{ await window.storage.set(INVENTORY_KEY, JSON.stringify(items), true); return true; }
+  catch(e){ console.error('inventory save failed', e); return false; }
+}
+async function loadInventoryCats(){
+  try{
+    const res = await window.storage.get(INVENTORY_CATS_KEY, true);
+    const parsed = res && res.value ? JSON.parse(res.value) : null;
+    return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_INVENTORY_CATS.slice();
+  }catch(e){ return DEFAULT_INVENTORY_CATS.slice(); }
+}
+async function saveInventoryCats(cats){
+  try{ await window.storage.set(INVENTORY_CATS_KEY, JSON.stringify(cats), true); return true; }
+  catch(e){ console.error('inventory categories save failed', e); return false; }
+}
+async function openInventoryModal(){
+  closeSidePanels();
+  let items = await loadInventory();
+  let cats = await loadInventoryCats();
+  let query = '';
+  let filter = 'all'; // 'all' or a category name
+  const bg = document.createElement('div');
+  bg.className = 'modal-bg';
+  document.body.appendChild(bg);
+
+  let saveTimer = null, catsDirty = false;
+  // one-off rename: 'Nuts and bolts' -> 'Locking mechanisms' (saved categories and items)
+  let renamed = false;
+  cats = cats.map(c => c === 'Nuts and bolts' ? (renamed = true, 'Locking mechanisms') : c);
+  cats = cats.filter((c, i) => cats.indexOf(c) === i);
+  items.forEach(i => { if(i.category === 'Nuts and bolts'){ i.category = 'Locking mechanisms'; renamed = true; } });
+  function queueSave(){
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(flush, 500);
+  }
+  async function flush(){
+    if(!saveTimer) return;
+    clearTimeout(saveTimer); saveTimer = null;
+    const ok = await saveInventory(items);
+    if(catsDirty){ catsDirty = false; await saveInventoryCats(cats); }
+    if(!ok) showToast('Inventory save failed', true);
+  }
+  const qtyOf = i => { const q = parseFloat(i.qty); return isNaN(q) ? 0 : q; };
+  const catOptions = sel => `<option value="">Uncategorised</option>` + cats.map(c => `<option value="${esc(c)}" ${c===sel?'selected':''}>${esc(c)}</option>`).join('');
+
+  function rowHtml(i){
+    return `
+      <div class="inv-item" data-inv="${i.id}" style="margin-bottom:10px;">
+        <div class="supply-row inv-row" style="margin-bottom:4px;">
+          <input type="text" class="inv-name" value="${esc(i.name || '')}" placeholder="Item" style="flex:1; min-width:0;">
+          <button type="button" class="mo-btn inv-step" data-d="-1" aria-label="Decrease">&minus;</button>
+          <input type="number" class="inv-qty" min="0" step="1" value="${esc(String(i.qty ?? ''))}" style="flex:0 0 58px; text-align:center;">
+          <button type="button" class="mo-btn inv-step" data-d="1" aria-label="Increase">+</button>
+          <button type="button" class="mo-btn inv-del" aria-label="Remove item">&times;</button>
+        </div>
+        <select class="inv-cat" style="font-size:12px; padding:4px 6px;">${catOptions(i.category || '')}</select>
+      </div>`;
+  }
+  function listHtml(){
+    if(!items.length) return '<div class="script-hint">Nothing here yet — add an item, its category and how many are at the studio.</div>';
+    const q = query.trim().toLowerCase();
+    const matches = items.filter(i => (!q || (i.name || '').toLowerCase().includes(q)) && (filter === 'all' || (i.category || '') === (filter === '__none' ? '' : filter)));
+    if(!matches.length) return '<div class="script-hint">No items match.</div>';
+    // grouped by category (known categories first, then uncategorised / orphaned ones)
+    const known = cats.concat(['']);
+    const extra = [...new Set(matches.map(i => i.category || ''))].filter(c => !known.includes(c));
+    return known.concat(extra).map(c => {
+      const group = matches.filter(i => (i.category || '') === c);
+      if(!group.length) return '';
+      const total = group.reduce((sum, i) => sum + qtyOf(i), 0);
+      return `<div class="section-label" style="margin:14px 0 8px;"><span>${esc(c || 'Uncategorised')} (${total})</span></div>${group.map(rowHtml).join('')}`;
+    }).join('');
+  }
+  function chipsHtml(){
+    const chip = (key, label) => `<button type="button" class="btn small inv-chip" data-cat="${esc(key)}" style="${filter===key ? 'background:var(--text); color:var(--bg);' : ''}">${esc(label)}</button>`;
+    return chip('all', 'All') + cats.map(c => chip(c, c)).join('') + `<button type="button" class="btn small" id="invAddCat">+ Category</button>`;
+  }
+  function totalText(){
+    return `${items.length} item${items.length===1?'':'s'} · ${items.reduce((s, i) => s + qtyOf(i), 0)} in total`;
+  }
+  function paintList(){
+    bg.querySelector('#invRows').innerHTML = listHtml();
+    bg.querySelector('#invCount').textContent = totalText();
+    wireRows();
+  }
+  function paint(){
+    bg.innerHTML = `
+      <div class="modal">
+        <h3>Studio inventory</h3>
+        <div class="supply-row" style="margin-bottom:6px;">
+          <input type="text" id="invNewName" placeholder="Item (e.g. C-stand)" style="flex:1; min-width:0;">
+          <input type="number" id="invNewQty" min="0" step="1" placeholder="Qty" style="flex:0 0 64px; text-align:center;">
+        </div>
+        <div class="supply-row" style="margin-bottom:6px;">
+          <select id="invNewCat" style="flex:1; min-width:0;">${catOptions(filter !== 'all' && filter !== '__none' ? filter : '')}</select>
+          <button type="button" class="btn small" id="invAdd">Add</button>
+        </div>
+        <div id="invChips" style="display:flex; flex-wrap:wrap; gap:6px; margin:10px 0;">${chipsHtml()}</div>
+        <input type="text" id="invSearch" placeholder="Search…" value="${esc(query)}" style="margin-bottom:10px;">
+        <div id="invRows">${listHtml()}</div>
+        <div class="cost-line" style="margin-top:12px;"><span id="invCount">${totalText()}</span></div>
+        <div class="modal-actions"><button class="btn primary" id="invClose" style="flex:1;">Close</button></div>
+      </div>`;
+    wire();
+    bg.querySelector('#invNewName').focus();
+  }
+  function wireRows(){
+    bg.querySelectorAll('.inv-item').forEach(row => {
+      const item = items.find(i => i.id === row.dataset.inv);
+      if(!item) return;
+      const qtyEl = row.querySelector('.inv-qty');
+      const refresh = () => { bg.querySelector('#invCount').textContent = totalText(); };
+      row.querySelector('.inv-name').addEventListener('input', e => { item.name = e.target.value; queueSave(); });
+      qtyEl.addEventListener('input', () => {
+        item.qty = qtyEl.value === '' ? '' : Math.max(0, parseFloat(qtyEl.value) || 0);
+        refresh(); queueSave();
+      });
+      row.querySelectorAll('.inv-step').forEach(b => b.addEventListener('click', () => {
+        item.qty = Math.max(0, qtyOf(item) + parseInt(b.dataset.d, 10));
+        qtyEl.value = item.qty;
+        refresh(); queueSave();
+      }));
+      row.querySelector('.inv-cat').addEventListener('change', e => {
+        item.category = e.target.value;
+        queueSave(); paintList();
+      });
+      row.querySelector('.inv-del').addEventListener('click', () => {
+        items = items.filter(i => i.id !== item.id);
+        queueSave(); paintList();
+      });
+    });
+  }
+  function wireChips(){
+    bg.querySelectorAll('.inv-chip').forEach(btn => btn.addEventListener('click', () => {
+      filter = btn.dataset.cat;
+      bg.querySelector('#invChips').innerHTML = chipsHtml(); wireChips();
+      bg.querySelector('#invNewCat').innerHTML = catOptions(filter !== 'all' ? filter : '');
+      paintList();
+    }));
+    bg.querySelector('#invAddCat').addEventListener('click', () => {
+      // inline input instead of a browser dialog
+      const holder = bg.querySelector('#invAddCat');
+      const wrap = document.createElement('span');
+      wrap.style.cssText = 'display:flex; gap:6px; flex:1 1 100%;';
+      wrap.innerHTML = '<input type="text" id="invCatName" placeholder="New category name" style="flex:1; min-width:0;"><button type="button" class="btn small" id="invCatOk">Add</button>';
+      holder.replaceWith(wrap);
+      const input = wrap.querySelector('#invCatName');
+      input.focus();
+      const commit = () => {
+        const name = input.value.trim();
+        if(name && !cats.some(c => c.toLowerCase() === name.toLowerCase())){
+          cats.push(name); catsDirty = true; queueSave();
+        }
+        if(name) filter = cats.find(c => c.toLowerCase() === name.toLowerCase());
+        bg.querySelector('#invChips').innerHTML = chipsHtml(); wireChips();
+        bg.querySelector('#invNewCat').innerHTML = catOptions(filter !== 'all' ? filter : '');
+        paintList();
+      };
+      wrap.querySelector('#invCatOk').addEventListener('click', commit);
+      input.addEventListener('keydown', e => { if(e.key === 'Enter') commit(); });
+    });
+  }
+  function wire(){
+    const nameEl = bg.querySelector('#invNewName');
+    const qtyEl = bg.querySelector('#invNewQty');
+    const catEl = bg.querySelector('#invNewCat');
+    const add = () => {
+      const name = nameEl.value.trim();
+      if(!name) return;
+      const q = parseFloat(qtyEl.value);
+      items.push({ id: uid(), name, qty: isNaN(q) ? 1 : Math.max(0, q), category: catEl.value });
+      nameEl.value = ''; qtyEl.value = '';
+      query = ''; bg.querySelector('#invSearch').value = '';
+      queueSave(); paintList(); nameEl.focus();
+    };
+    bg.querySelector('#invAdd').addEventListener('click', add);
+    [nameEl, qtyEl].forEach(el => el.addEventListener('keydown', e => { if(e.key === 'Enter') add(); }));
+    bg.querySelector('#invSearch').addEventListener('input', e => { query = e.target.value; paintList(); });
+    const close = async () => { await flush(); bg.remove(); };
+    bg.querySelector('#invClose').addEventListener('click', close);
+    bg.addEventListener('click', ev => { if(ev.target === bg) close(); });
+    wireChips();
+    wireRows();
+  }
+  paint();
+  if(renamed){ catsDirty = true; queueSave(); }
+}
+
 async function openTodoListModal(){
   closeSidePanels();
   let items = await loadTodoList();
@@ -2132,7 +2330,6 @@ async function openTodoListModal(){
         ev.preventDefault();
         const row = h.closest('[data-todo]');
         row.classList.add('dragging');
-        try{ h.setPointerCapture(ev.pointerId); }catch(e){}
         const move = e => {
           const el = document.elementFromPoint(e.clientX, e.clientY);
           const over = el && el.closest && el.closest('[data-todo]');
@@ -2142,17 +2339,18 @@ async function openTodoListModal(){
           else list.insertBefore(row, over.nextSibling);
         };
         const up = async () => {
-          h.removeEventListener('pointermove', move);
-          h.removeEventListener('pointerup', up);
-          h.removeEventListener('pointercancel', up);
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          window.removeEventListener('pointercancel', up);
           row.classList.remove('dragging');
           const order = [...list.querySelectorAll('[data-todo]')].map(r => r.dataset.todo);
           items = order.map(id => items.find(i => i.id === id)).filter(Boolean);
           await saveTodoList(items);
         };
-        h.addEventListener('pointermove', move);
-        h.addEventListener('pointerup', up);
-        h.addEventListener('pointercancel', up);
+        // window-level listeners: moving the row in the DOM would drop pointer capture on the handle
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+        window.addEventListener('pointercancel', up);
       });
     });
   }
@@ -2266,6 +2464,9 @@ function renderHeader(){
       <div class="topbar-actions">
         <button class="sq-btn" id="todoBtn" aria-label="To do today" title="To do today">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M7 9h10M7 13h10M7 17h6"/></svg>
+        </button>
+        <button class="sq-btn" id="invBtn" aria-label="Studio inventory" title="Studio inventory">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
         </button>
         <button class="sq-btn" id="calBtn" aria-label="Project calendar" title="Project calendar">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>
@@ -2407,6 +2608,7 @@ function renderList(app, tab){
     });
   });
   document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
+  document.getElementById('invBtn').addEventListener('click', () => openInventoryModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
   const nb = document.getElementById('notifyBanner');
   if(nb) nb.addEventListener('click', () => goProject(nb.dataset.project));
@@ -2475,6 +2677,7 @@ function renderNotFound(app){
     <button class="btn" id="backBtn">← Back to projects</button></div>`;
   document.getElementById('backBtn').addEventListener('click', () => goTab('current'));
   document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
+  document.getElementById('invBtn').addEventListener('click', () => openInventoryModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
 }
 
@@ -6805,6 +7008,9 @@ function openTestsModal(project, step, sideRight){
 }
 
 function supplyQty(s){ const q = parseFloat(s.qty); return q > 0 ? q : 1; }
+function supplyGrandTotal(list){
+  return list.reduce((sum, s) => { const c = parseFloat(s.cost); return sum + (isNaN(c) ? 0 : c * supplyQty(s)); }, 0);
+}
 function supplyLineTotalText(s){
   const c = parseFloat(s.cost);
   if(isNaN(c)) return '';
@@ -6850,6 +7056,7 @@ function openSuppliesModal(project, step, sideRight){
         <div class="script-hint">Tick the box once an item's been ordered. Type a quantity and the cost each — the total is worked out for you.</div>
         <div id="supplyRows">${supplies.map(supplyRowHtml).join('')}</div>
         <button type="button" class="btn small" id="spAddSupply" style="width:100%; margin-top:6px;">+ Add item</button>
+        <div class="cost-line" style="margin-top:12px;"><span>Total</span><span id="spTotal">${fmtMoney(supplyGrandTotal(supplies))}</span></div>
         <div class="modal-actions">
           <button class="btn ghost" id="spCancel" style="flex:1;">Cancel</button>
           <button class="btn primary" id="spSave" style="flex:1;">Save</button>
@@ -6864,6 +7071,8 @@ function openSuppliesModal(project, step, sideRight){
       const upd = () => {
         const tmp = { qty: row.querySelector('.supply-qty').value, cost: row.querySelector('.supply-cost').value };
         row.querySelector('.supply-total').textContent = supplyLineTotalText(tmp);
+        syncFromDom();
+        bg.querySelector('#spTotal').textContent = fmtMoney(supplyGrandTotal(supplies));
       };
       row.querySelector('.supply-qty').addEventListener('input', upd);
       row.querySelector('.supply-cost').addEventListener('input', upd);
@@ -7634,6 +7843,7 @@ Sarah steps outside. The neighbourhood is quiet, waking up. She takes a deep bre
       <div id="diagResults" style="text-align:left; font-family:var(--mono); font-size:11px; white-space:pre-wrap; max-width:420px; margin:0 auto 14px; padding:10px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); display:none;"></div>
       <button class="btn danger small" id="resetLoadBtn">Start fresh (clears saved data)</button></div>`;
     document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
+  document.getElementById('invBtn').addEventListener('click', () => openInventoryModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
     document.getElementById('retryLoadBtn').addEventListener('click', () => location.reload());
     document.getElementById('diagLoadBtn').addEventListener('click', async () => {
