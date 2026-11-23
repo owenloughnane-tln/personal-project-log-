@@ -2125,6 +2125,17 @@ async function renderInventoryPage(app){
   let items = await loadInventory();
   let cats = await loadInventoryCats();
   if(getRoute().tab !== 'inventory') return; // navigated away while loading
+  // one-off import of the screws/nuts list (runs once, skips names already present)
+  try{
+    const seeded = await window.storage.get('inventory-seed-20261123', true).then(r => !!(r && r.value)).catch(() => false);
+    if(!seeded){
+      const have = new Set(items.map(i => (i.name || '').trim().toLowerCase()));
+      [["M1*2.5mm",50],["M1*3mm",50],["M1*4mm",50],["M1.2*3mm",50],["M1.2*4mm",50],["M1.2*5mm",50],["M1.4*3mm",50],["M1.4*4mm",50],["M1.4*5mm",50],["M1.6*3mm",50],["M1.6*4mm",50],["M1.6*6mm",50],["M2*4mm",50],["M2*6mm",50],["M2*8mm",50],["M2.5*6mm",40],["M2.5*8mm",40],["M2.5*10mm",40],["M1 nut",50],["M1.2 nut",50],["M1.4 nut",50],["M1.6 nut",60],["M2 nut",60],["M2.5 nut",60]].forEach(([name, qty]) => {
+        if(!have.has(name.toLowerCase())) items.push({ id: uid(), name, qty, category: 'Locking mechanisms' });
+      });
+      if(await saveInventory(items)) await window.storage.set('inventory-seed-20261123', '1', true);
+    }
+  }catch(e){ console.error('inventory seed failed', e); }
   let query = '';
   let filter = 'all'; // 'all' or a category name
   app.innerHTML = `${renderHeader()}<div id="invPage"></div>${renderBottomNav('inventory')}`;
