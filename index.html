@@ -2116,15 +2116,22 @@ async function saveInventoryCats(cats){
   try{ await window.storage.set(INVENTORY_CATS_KEY, JSON.stringify(cats), true); return true; }
   catch(e){ console.error('inventory categories save failed', e); return false; }
 }
-async function openInventoryModal(){
+async function renderInventoryPage(app){
   closeSidePanels();
+  app.innerHTML = `${renderHeader()}<div class="loading">Loading inventory…</div>${renderBottomNav('inventory')}`;
+  wireNavtabs(app);
+  document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
+  document.getElementById('calBtn').addEventListener('click', () => goCalendar());
   let items = await loadInventory();
   let cats = await loadInventoryCats();
+  if(getRoute().tab !== 'inventory') return; // navigated away while loading
   let query = '';
   let filter = 'all'; // 'all' or a category name
-  const bg = document.createElement('div');
-  bg.className = 'modal-bg';
-  document.body.appendChild(bg);
+  app.innerHTML = `${renderHeader()}<div id="invPage"></div>${renderBottomNav('inventory')}`;
+  wireNavtabs(app);
+  document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
+  document.getElementById('calBtn').addEventListener('click', () => goCalendar());
+  const bg = app.querySelector('#invPage');
 
   let saveTimer = null, catsDirty = false;
   // one-off rename: 'Nuts and bolts' -> 'Locking mechanisms' (saved categories and items)
@@ -2188,8 +2195,8 @@ async function openInventoryModal(){
   }
   function paint(){
     bg.innerHTML = `
-      <div class="modal">
-        <h3>Studio inventory</h3>
+      <div style="padding-top:16px;">
+        <div class="section-label"><span>Studio inventory</span></div>
         <div class="supply-row" style="margin-bottom:6px;">
           <input type="text" id="invNewName" placeholder="Item (e.g. C-stand)" style="flex:1; min-width:0;">
           <input type="number" id="invNewQty" min="0" step="1" placeholder="Qty" style="flex:0 0 64px; text-align:center;">
@@ -2202,10 +2209,8 @@ async function openInventoryModal(){
         <input type="text" id="invSearch" placeholder="Search…" value="${esc(query)}" style="margin-bottom:10px;">
         <div id="invRows">${listHtml()}</div>
         <div class="cost-line" style="margin-top:12px;"><span id="invCount">${totalText()}</span></div>
-        <div class="modal-actions"><button class="btn primary" id="invClose" style="flex:1;">Close</button></div>
       </div>`;
     wire();
-    bg.querySelector('#invNewName').focus();
   }
   function wireRows(){
     bg.querySelectorAll('.inv-item').forEach(row => {
@@ -2279,12 +2284,10 @@ async function openInventoryModal(){
     bg.querySelector('#invAdd').addEventListener('click', add);
     [nameEl, qtyEl].forEach(el => el.addEventListener('keydown', e => { if(e.key === 'Enter') add(); }));
     bg.querySelector('#invSearch').addEventListener('input', e => { query = e.target.value; paintList(); });
-    const close = async () => { await flush(); bg.remove(); };
-    bg.querySelector('#invClose').addEventListener('click', close);
-    bg.addEventListener('click', ev => { if(ev.target === bg) close(); });
     wireChips();
     wireRows();
   }
+  window._invFlush = flush; // render() flushes pending saves when you leave the tab
   paint();
   if(renamed){ catsDirty = true; queueSave(); }
 }
@@ -2429,6 +2432,7 @@ function goCalendar(){ location.hash = 'cal'; }
 function goProjectCalendar(id){ location.hash = 'projectcal=' + encodeURIComponent(id); }
 
 async function render(){
+  if(window._invFlush){ const f = window._invFlush; window._invFlush = null; f(); }
   const app = document.getElementById('app');
   const route = getRoute();
   if(route.view !== 'moodboard' && mbPasteHandler){
@@ -2450,6 +2454,8 @@ async function render(){
     const p = byId(route.id);
     if(!p){ renderNotFound(app); return; }
     renderCalendarView(app, p);
+  } else if(route.tab === 'inventory'){
+    renderInventoryPage(app);
   } else {
     renderList(app, route.tab);
   }
@@ -2464,9 +2470,6 @@ function renderHeader(){
       <div class="topbar-actions">
         <button class="sq-btn" id="todoBtn" aria-label="To do today" title="To do today">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M7 9h10M7 13h10M7 17h6"/></svg>
-        </button>
-        <button class="sq-btn" id="invBtn" aria-label="Studio inventory" title="Studio inventory">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8l-9-5-9 5 9 5 9-5z"/><path d="M3 8v8l9 5 9-5V8"/><path d="M12 13v8"/></svg>
         </button>
         <button class="sq-btn" id="calBtn" aria-label="Project calendar" title="Project calendar">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4.5" width="18" height="16" rx="3"/><path d="M3 9.5h18M8 2.5v4M16 2.5v4"/></svg>
@@ -2496,6 +2499,7 @@ function renderBottomNav(activeApp){
     <div class="bottomnav">
       <button class="navtab ${activeApp==='projects'?'active':''}" data-tab="current">Projects</button>
       <button class="navtab ${activeApp==='films'?'active':''}" data-tab="films">Films</button>
+      <button class="navtab ${activeApp==='inventory'?'active':''}" data-tab="inventory">Inventory</button>
     </div>`;
 }
 function wireNavtabs(container){
@@ -2608,7 +2612,6 @@ function renderList(app, tab){
     });
   });
   document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
-  document.getElementById('invBtn').addEventListener('click', () => openInventoryModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
   const nb = document.getElementById('notifyBanner');
   if(nb) nb.addEventListener('click', () => goProject(nb.dataset.project));
@@ -2677,7 +2680,6 @@ function renderNotFound(app){
     <button class="btn" id="backBtn">← Back to projects</button></div>`;
   document.getElementById('backBtn').addEventListener('click', () => goTab('current'));
   document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
-  document.getElementById('invBtn').addEventListener('click', () => openInventoryModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
 }
 
@@ -7843,7 +7845,6 @@ Sarah steps outside. The neighbourhood is quiet, waking up. She takes a deep bre
       <div id="diagResults" style="text-align:left; font-family:var(--mono); font-size:11px; white-space:pre-wrap; max-width:420px; margin:0 auto 14px; padding:10px; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); display:none;"></div>
       <button class="btn danger small" id="resetLoadBtn">Start fresh (clears saved data)</button></div>`;
     document.getElementById('todoBtn').addEventListener('click', () => openTodoListModal());
-  document.getElementById('invBtn').addEventListener('click', () => openInventoryModal());
   document.getElementById('calBtn').addEventListener('click', () => goCalendar());
     document.getElementById('retryLoadBtn').addEventListener('click', () => location.reload());
     document.getElementById('diagLoadBtn').addEventListener('click', async () => {
