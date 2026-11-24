@@ -2175,7 +2175,6 @@ async function renderInventoryPage(app){
           <button type="button" class="mo-btn inv-step" data-d="1" aria-label="Increase">+</button>
           <button type="button" class="mo-btn inv-del" aria-label="Remove item">&times;</button>
         </div>
-        <select class="inv-cat" style="font-size:12px; padding:4px 6px;">${catOptions(i.category || '')}</select>
       </div>`;
   }
   function listHtml(){
@@ -2209,13 +2208,16 @@ async function renderInventoryPage(app){
     bg.innerHTML = `
       <div style="padding-top:16px;">
         <div class="section-label"><span>Studio inventory</span></div>
-        <div class="supply-row" style="margin-bottom:6px;">
-          <input type="text" id="invNewName" placeholder="Item (e.g. C-stand)" style="flex:1; min-width:0;">
-          <input type="number" id="invNewQty" min="0" step="1" placeholder="Qty" style="flex:0 0 64px; text-align:center;">
-        </div>
-        <div class="supply-row" style="margin-bottom:6px;">
-          <select id="invNewCat" style="flex:1; min-width:0;">${catOptions(filter !== 'all' && filter !== '__none' ? filter : '')}</select>
-          <button type="button" class="btn small" id="invAdd">Add</button>
+        <button type="button" class="btn small" id="invPlus" style="width:100%;">+ Add new item</button>
+        <div id="invForm" style="display:none; margin-top:8px;">
+          <div class="supply-row" style="margin-bottom:6px;">
+            <input type="text" id="invNewName" placeholder="Item (e.g. C-stand)" style="flex:1; min-width:0;">
+            <input type="number" id="invNewQty" min="0" step="1" placeholder="Qty" style="flex:0 0 64px; text-align:center;">
+          </div>
+          <div class="supply-row" style="margin-bottom:6px;">
+            <select id="invNewCat" style="flex:1; min-width:0;">${catOptions(filter !== 'all' && filter !== '__none' ? filter : '')}</select>
+            <button type="button" class="btn small" id="invAdd">Add</button>
+          </div>
         </div>
         <div id="invChips" style="display:flex; flex-wrap:wrap; gap:6px; margin:10px 0;">${chipsHtml()}</div>
         <input type="text" id="invSearch" placeholder="Search…" value="${esc(query)}" style="margin-bottom:10px;">
@@ -2240,10 +2242,6 @@ async function renderInventoryPage(app){
         qtyEl.value = item.qty;
         refresh(); queueSave();
       }));
-      row.querySelector('.inv-cat').addEventListener('change', e => {
-        item.category = e.target.value;
-        queueSave(); paintList();
-      });
       row.querySelector('.inv-del').addEventListener('click', () => {
         items = items.filter(i => i.id !== item.id);
         queueSave(); paintList();
@@ -2293,6 +2291,13 @@ async function renderInventoryPage(app){
       query = ''; bg.querySelector('#invSearch').value = '';
       queueSave(); paintList(); nameEl.focus();
     };
+    const form = bg.querySelector('#invForm'), plus = bg.querySelector('#invPlus');
+    plus.addEventListener('click', () => {
+      const open = form.style.display === 'none';
+      form.style.display = open ? '' : 'none';
+      plus.textContent = open ? '− Close' : '+ Add new item';
+      if(open) nameEl.focus();
+    });
     bg.querySelector('#invAdd').addEventListener('click', add);
     [nameEl, qtyEl].forEach(el => el.addEventListener('keydown', e => { if(e.key === 'Enter') add(); }));
     bg.querySelector('#invSearch').addEventListener('input', e => { query = e.target.value; paintList(); });
