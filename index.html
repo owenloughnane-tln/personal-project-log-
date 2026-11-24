@@ -78,6 +78,8 @@
     outline:none; overflow-y:auto; color:var(--text);
   }
   .script-textarea:focus{outline:2px solid var(--amber); outline-offset:1px;}
+  .inv-qty, #invNewQty{-moz-appearance:textfield; appearance:textfield; padding-left:4px; padding-right:4px; font-variant-numeric:tabular-nums;}
+  .inv-qty::-webkit-outer-spin-button, .inv-qty::-webkit-inner-spin-button, #invNewQty::-webkit-outer-spin-button, #invNewQty::-webkit-inner-spin-button{-webkit-appearance:none; margin:0;}
   .todo-handle{cursor:grab; touch-action:none; user-select:none; -webkit-user-select:none; color:var(--text-dim); font-size:18px; letter-spacing:-3px; padding:8px 10px 8px 2px; line-height:1; flex:none;}
   .todo-handle:active{cursor:grabbing;}
   [data-todo].dragging{opacity:.55; background:var(--panel);}
@@ -2162,6 +2164,8 @@ async function renderInventoryPage(app){
     if(catsDirty){ catsDirty = false; await saveInventoryCats(cats); }
     if(!ok) showToast('Inventory save failed', true);
   }
+  const FILAMENT = '3D printer filament';
+  const isFil = i => (i.category || '') === FILAMENT;
   const qtyOf = i => { const q = parseFloat(i.qty); return isNaN(q) ? 0 : q; };
   const catOptions = sel => `<option value="">Uncategorised</option>` + cats.map(c => `<option value="${esc(c)}" ${c===sel?'selected':''}>${esc(c)}</option>`).join('');
 
@@ -2170,9 +2174,9 @@ async function renderInventoryPage(app){
       <div class="inv-item" data-inv="${i.id}" style="margin-bottom:10px;">
         <div class="supply-row inv-row" style="margin-bottom:4px;">
           <input type="text" class="inv-name" value="${esc(i.name || '')}" placeholder="Item" style="flex:1; min-width:0;">
-          <button type="button" class="mo-btn inv-step" data-d="-1" aria-label="Decrease">&minus;</button>
-          <input type="number" class="inv-qty" min="0" step="1" value="${esc(String(i.qty ?? ''))}" style="flex:0 0 58px; text-align:center;">
-          <button type="button" class="mo-btn inv-step" data-d="1" aria-label="Increase">+</button>
+          <button type="button" class="mo-btn inv-step" data-d="${isFil(i) ? -50 : -1}" aria-label="Decrease">&minus;</button>
+          <input type="number" class="inv-qty" min="0" step="1" value="${esc(String(i.qty ?? ''))}" style="flex:0 0 72px; width:72px; text-align:center;">${isFil(i) ? '<span class="inv-unit" style="font-family:var(--mono); font-size:12px; color:var(--text-dim); margin-left:-2px;">g</span>' : ''}
+          <button type="button" class="mo-btn inv-step" data-d="${isFil(i) ? 50 : 1}" aria-label="Increase">+</button>
           <button type="button" class="mo-btn inv-del" aria-label="Remove item">&times;</button>
         </div>
       </div>`;
@@ -2189,7 +2193,7 @@ async function renderInventoryPage(app){
       const group = matches.filter(i => (i.category || '') === c);
       if(!group.length) return '';
       const total = group.reduce((sum, i) => sum + qtyOf(i), 0);
-      return `<div class="section-label" style="margin:14px 0 8px;"><span>${esc(c || 'Uncategorised')} (${total})</span></div>${group.map(rowHtml).join('')}`;
+      return `<div class="section-label" style="margin:14px 0 8px;"><span>${esc(c || 'Uncategorised')} (${total}${c === FILAMENT ? ' g' : ''})</span></div>${group.map(rowHtml).join('')}`;
     }).join('');
   }
   function chipsHtml(){
@@ -2197,7 +2201,9 @@ async function renderInventoryPage(app){
     return chip('all', 'All') + cats.map(c => chip(c, c)).join('') + `<button type="button" class="btn small" id="invAddCat">+ Category</button>`;
   }
   function totalText(){
-    return `${items.length} item${items.length===1?'':'s'} · ${items.reduce((s, i) => s + qtyOf(i), 0)} in total`;
+    const units = items.filter(i => !isFil(i)).reduce((s, i) => s + qtyOf(i), 0);
+    const grams = items.filter(isFil).reduce((s, i) => s + qtyOf(i), 0);
+    return `${items.length} item${items.length===1?'':'s'} · ${units} in total` + (grams ? ` · ${grams} g filament` : '');
   }
   function paintList(){
     bg.querySelector('#invRows').innerHTML = listHtml();
@@ -2212,7 +2218,7 @@ async function renderInventoryPage(app){
         <div id="invForm" style="display:none; margin-top:8px;">
           <div class="supply-row" style="margin-bottom:6px;">
             <input type="text" id="invNewName" placeholder="Item (e.g. C-stand)" style="flex:1; min-width:0;">
-            <input type="number" id="invNewQty" min="0" step="1" placeholder="Qty" style="flex:0 0 64px; text-align:center;">
+            <input type="number" id="invNewQty" min="0" step="1" placeholder="Qty" style="flex:0 0 72px; width:72px; text-align:center;">
           </div>
           <div class="supply-row" style="margin-bottom:6px;">
             <select id="invNewCat" style="flex:1; min-width:0;">${catOptions(filter !== 'all' && filter !== '__none' ? filter : '')}</select>
@@ -2282,12 +2288,16 @@ async function renderInventoryPage(app){
     const nameEl = bg.querySelector('#invNewName');
     const qtyEl = bg.querySelector('#invNewQty');
     const catEl = bg.querySelector('#invNewCat');
+    const syncQtyPlaceholder = () => { qtyEl.placeholder = catEl.value === FILAMENT ? 'Grams' : 'Qty'; };
+    catEl.addEventListener('change', syncQtyPlaceholder);
+    syncQtyPlaceholder();
     const add = () => {
       const name = nameEl.value.trim();
       if(!name) return;
       const q = parseFloat(qtyEl.value);
       items.push({ id: uid(), name, qty: isNaN(q) ? 1 : Math.max(0, q), category: catEl.value });
       nameEl.value = ''; qtyEl.value = '';
+      syncQtyPlaceholder();
       query = ''; bg.querySelector('#invSearch').value = '';
       queueSave(); paintList(); nameEl.focus();
     };
